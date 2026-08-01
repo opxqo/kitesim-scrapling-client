@@ -426,6 +426,56 @@ describe("EdgeOne orders Blob snapshot", () => {
     expect(response.headers.get("X-SMS-Cache")).toBe("refreshed")
   })
 
+  it("does not forward dashboard credentials to an arbitrary eo-pages-host", async () => {
+    const store = new FakeStore()
+    const fetchImpl = vi.fn(async (url) => {
+      expect(String(url)).toBe(
+        "https://internal.function.example/origin/orders-origin?status=2&limit=20",
+      )
+      return new Response(JSON.stringify(ORDERS_SNAPSHOT), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    })
+    const handler = createOrdersCacheHandler({ fetchImpl, getStoreImpl: () => store })
+    const request = new Request(
+      "https://internal.function.example/api/orders?status=2&limit=20&refresh=1",
+      {
+        headers: {
+          "Authorization": `Bearer ${ACCESS_KEY}`,
+          "eo-pages-host": "169.254.169.254",
+          "x-forwarded-proto": "https",
+        },
+      },
+    )
+
+    const response = await handler({ request, env: BASE_ENV })
+
+    expect(response.status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it("forwards only validated status and limit parameters to the orders origin", async () => {
+    const store = new FakeStore()
+    const fetchImpl = vi.fn(async (url) => {
+      expect(String(url)).toBe("https://example.com/origin/orders-origin?status=2&limit=20")
+      return new Response(JSON.stringify(ORDERS_SNAPSHOT), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    })
+    const handler = createOrdersCacheHandler({ fetchImpl, getStoreImpl: () => store })
+    const request = new Request(
+      "https://example.com/api/orders?status=2&limit=20&refresh=1&phone=%2B15551234567&unexpected=value",
+      { headers: { "Authorization": `Bearer ${ACCESS_KEY}` } },
+    )
+
+    const response = await handler({ request, env: BASE_ENV })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("X-SMS-Cache")).toBe("refreshed")
+  })
+
   it("returns stale orders without an automatic backend refresh", async () => {
     const store = new FakeStore()
     const fetchImpl = ordersOriginFetch()

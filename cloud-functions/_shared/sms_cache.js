@@ -20,7 +20,7 @@ const MAX_REQUEST_BODY_BYTES = 8 * 1024
 const MESSAGE_ORIGIN_PATH = "/origin/messages-origin"
 const ORDERS_ORIGIN_PATH = "/origin/orders-origin"
 const PHONE_PATTERN = /^\+?\d{6,20}$/
-const SAFE_HOST_PATTERN = /^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|\[[0-9a-f:]+\])(?::\d{1,5})?$/i
+const PUBLIC_ORIGIN_HOST = "esim.opxqo.cn"
 
 
 function environmentValue(context, name) {
@@ -132,15 +132,14 @@ function requestHeaders(request, contentType = false) {
 function publicRequestUrl(request) {
   const url = new URL(request.url)
   // EdgeOne builds request.url from its internal Host and exposes the public route separately.
-  const pagesHost = (request.headers.get("eo-pages-host") || "").split(",", 1)[0].trim()
-  if (!pagesHost || pagesHost.includes("..") || !SAFE_HOST_PATTERN.test(pagesHost)) return url
-
-  const forwardedProtocol = (request.headers.get("x-forwarded-proto") || "")
+  const pagesHost = (request.headers.get("eo-pages-host") || "")
     .split(",", 1)[0]
     .trim()
     .toLowerCase()
-  url.protocol = forwardedProtocol === "http" ? "http:" : "https:"
-  url.host = pagesHost
+  if (pagesHost !== PUBLIC_ORIGIN_HOST) return url
+
+  url.protocol = "https:"
+  url.host = PUBLIC_ORIGIN_HOST
   url.username = ""
   url.password = ""
   return url
@@ -529,10 +528,13 @@ function emptyOrdersResponse(query) {
 }
 
 
-async function fetchOrdersSnapshot(request, fetchImpl, cacheStatus) {
+async function fetchOrdersSnapshot(request, query, fetchImpl, cacheStatus) {
   const originUrl = publicRequestUrl(request)
   originUrl.pathname = ORDERS_ORIGIN_PATH
-  originUrl.searchParams.delete("refresh")
+  originUrl.search = ""
+  originUrl.hash = ""
+  originUrl.searchParams.set("status", String(query.status))
+  originUrl.searchParams.set("limit", String(query.limit))
   return fetchJson(
     fetchImpl,
     originUrl,
@@ -566,7 +568,7 @@ export function createOrdersCacheHandler(dependencies = {}) {
     const now = nowImpl()
 
     if (query.refresh) {
-      const origin = await fetchOrdersSnapshot(request, fetchImpl, "refresh")
+      const origin = await fetchOrdersSnapshot(request, query, fetchImpl, "refresh")
       if (!origin.ok) return origin.response
       if (!validOrdersSnapshot(origin.payload)) {
         return errorResponse("号码回源快照格式无效", 502, "upstream", "refresh")
