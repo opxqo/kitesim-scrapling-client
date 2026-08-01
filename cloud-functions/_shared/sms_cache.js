@@ -17,8 +17,8 @@ const DEFAULT_CACHE_TTL_SECONDS = 20
 const MIN_CACHE_TTL_SECONDS = 5
 const MAX_CACHE_TTL_SECONDS = 300
 const MAX_REQUEST_BODY_BYTES = 8 * 1024
-const MESSAGE_ORIGIN_PATH = "/api/messages-origin"
-const ORDERS_ORIGIN_PATH = "/api/orders-origin"
+const MESSAGE_ORIGIN_PATH = "/origin/messages-origin"
+const ORDERS_ORIGIN_PATH = "/origin/orders-origin"
 const PHONE_PATTERN = /^\+?\d{6,20}$/
 
 

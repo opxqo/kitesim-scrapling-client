@@ -188,7 +188,7 @@ npm run lint
 npm test
 npm run build
 .venv/bin/python -m unittest discover -s tests -v
-.venv/bin/python -m py_compile app.py kitesim_scrapling.py cloud-functions/api/index.py cloud-functions/_shared/*.py
+.venv/bin/python -m py_compile app.py kitesim_scrapling.py cloud-functions/origin/index.py cloud-functions/_shared/*.py
 ```
 
 测试只使用假 Token、假号码与假短信，不访问真实 Kitesim。
@@ -202,9 +202,11 @@ npm run build
 src/                               React 控制台、数据控制器与 shadcn/ui
 public/favicon.svg                 项目 Logo
 assets/readme/                     README 视觉素材
+cloud-functions/api/health.js     EdgeOne Node 健康检查入口
+cloud-functions/api/session.js    EdgeOne Node 访问口令验证入口
 cloud-functions/api/orders.js     EdgeOne Blob 号码入口
 cloud-functions/api/messages.js   EdgeOne Blob 短信入口
-cloud-functions/api/index.py      EdgeOne Python Origin
+cloud-functions/origin/index.py   独立的 EdgeOne Python Origin
 cloud-functions/_shared/           共享 API、账户签名与 Scrapling 客户端
 app.py                             本地 Flask API 与 dist 预览服务
 kitesim_scrapling.py              单账户命令行客户端
@@ -219,6 +221,7 @@ edgeone.json                       构建、安全头与函数超时
 - 控制台口令保存在当前标签页的 `sessionStorage`，关闭标签页后清除。
 - 定时刷新保存在 `localStorage`，默认关闭；可选 30 秒、1 分钟或 5 分钟。
 - Blob 没有对象 TTL。`SMS_CACHE_TTL_SECONDS` 只区分 `hit` 与 `stale`；旧快照不自动删除，也不触发自动刷新。
+- Python Origin 固定挂载在 `/origin/*`，避免其框架通配路由覆盖 `/api/orders` 与 `/api/messages` 的 Node Blob 函数。
 - 轮换 `SMS_CACHE_ENCRYPTION_KEY` 后旧快照无法解密，普通读取返回 `empty`，下一次显式刷新才使用新密钥回写。
 - 默认状态最多并发读取 8 个账户；“全部状态”最多查询 8 个账户，并对每个账户发起 5 次读取。
 - 单次返回最多 20 个号码；每个号码最多返回 20 条短信。

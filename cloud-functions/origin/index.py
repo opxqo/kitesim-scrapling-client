@@ -1,4 +1,4 @@
-"""EdgeOne Makers Flask entrypoint for the /api route prefix."""
+"""EdgeOne Makers Flask origin mounted under the /origin route prefix."""
 
 from __future__ import annotations
 

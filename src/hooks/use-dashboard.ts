@@ -58,8 +58,8 @@ function storeAutoRefreshSeconds(value: number) {
   }
 }
 
-function normalizeCacheStatus(value: unknown): CacheStatus {
-  return CACHE_STATUSES.has(value as CacheStatus) ? value as CacheStatus : "bypass"
+export function normalizeCacheStatus(value: unknown): CacheStatus | null {
+  return CACHE_STATUSES.has(value as CacheStatus) ? value as CacheStatus : null
 }
 
 function explainError(error: unknown): string {
@@ -73,6 +73,7 @@ export function useDashboard() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [healthError, setHealthError] = useState("")
   const [accessFeedback, setAccessFeedback] = useState("这里填写控制台口令，不是 Kitesim Token。")
+  const [accessInvalid, setAccessInvalid] = useState(false)
   const [authenticating, setAuthenticating] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
   const [status, setStatus] = useState<DashboardStatus>("2")
@@ -154,6 +155,7 @@ export function useDashboard() {
       storeAccessKey("")
       setAuthenticated(false)
       setAuthenticating(false)
+      setAccessInvalid(false)
       setAccessFeedback(message)
       setConnection({ mode: healthError ? "error" : "idle", text: healthError ? "服务不可用" : "工作台已锁定" })
       resetWorkspace()
@@ -231,6 +233,8 @@ export function useDashboard() {
           setConnection({ mode: "warning", text: "Blob 写入失败" })
         } else if (cacheStatus === "refreshed") {
           setConnection({ mode: "ready", text: "短信快照已更新" })
+        } else if (cacheStatus === null) {
+          setConnection({ mode: "ready", text: refresh ? "短信刷新完成" : "短信读取完成" })
         } else {
           setConnection({ mode: "ready", text: "已读取 Blob 短信" })
         }
@@ -244,6 +248,8 @@ export function useDashboard() {
             toast.warning("已从 Kitesim 刷新，但 Blob 快照写入失败")
           } else if (cacheStatus === "refreshed") {
             toast.success(items.length ? "短信已刷新并写入 Blob" : "短信已刷新，当前暂无记录")
+          } else if (cacheStatus === null) {
+            toast.success(items.length ? (refresh ? "短信已刷新" : "短信已读取") : "当前暂无短信")
           } else {
             toast.success(items.length ? "已读取 Blob 短信快照" : "Blob 快照中暂无短信")
           }
@@ -331,6 +337,8 @@ export function useDashboard() {
           setConnection({ mode: "warning", text: "Blob 写入失败" })
         } else if (ordersStatus === "refreshed") {
           setConnection({ mode: "ready", text: "号码快照已更新" })
+        } else if (ordersStatus === null) {
+          setConnection({ mode: "ready", text: refresh ? "号码刷新完成" : "号码读取完成" })
         } else {
           setConnection({ mode: "ready", text: "已读取 Blob 号码" })
         }
@@ -370,6 +378,8 @@ export function useDashboard() {
           toast.warning("已读取旧 Blob 快照；点击刷新可获取最新数据")
         } else if (ordersStatus === "bypass" || messagesStatus === "bypass") {
           toast.warning("已从 Kitesim 刷新，但 Blob 快照写入失败")
+        } else if (ordersStatus === null || (orderToLoad !== null && messagesStatus === null)) {
+          toast.success(orderToLoad ? (refresh ? "号码和短信已刷新" : "号码和短信已读取") : "号码读取完成")
         } else if (ordersStatus === "refreshed") {
           toast.success(orderToLoad ? "号码和短信已刷新并写入 Blob" : "号码已刷新并写入 Blob")
         } else if (messagesStatus === "empty") {
@@ -388,10 +398,12 @@ export function useDashboard() {
       const key = rawKey.trim()
       if (key.length < 12) {
         setAccessFeedback("访问口令至少需要 12 个字符。")
+        setAccessInvalid(true)
         return false
       }
 
       setAuthenticating(true)
+      setAccessInvalid(false)
       setAccessFeedback("正在验证访问口令…")
       setConnection({ mode: "loading", text: "正在建立安全通道" })
       try {
@@ -399,6 +411,7 @@ export function useDashboard() {
         accessKeyRef.current = key
         storeAccessKey(key)
         setAuthenticated(true)
+        setAccessInvalid(false)
         setAccessFeedback("")
         setConnection({ mode: "loading", text: "正在读取 Blob 号码" })
         await fetchOrders(statusRef.current, { key, quiet: options.quiet, refresh: false })
@@ -408,6 +421,7 @@ export function useDashboard() {
         storeAccessKey("")
         setAuthenticated(false)
         setAccessFeedback(explainError(error))
+        setAccessInvalid(true)
         setConnection({ mode: "idle", text: "等待访问口令" })
         return false
       } finally {
@@ -428,6 +442,7 @@ export function useDashboard() {
         if (!payload.ok) throw new ApiError("服务健康检查失败", 503, "server")
         if (!payload.authConfigured) {
           setAccessFeedback("服务端没有配置 DASHBOARD_ACCESS_KEY，暂时无法解锁。")
+          setAccessInvalid(true)
           setConnection({ mode: "error", text: "缺少服务端配置" })
           return
         }
@@ -442,6 +457,7 @@ export function useDashboard() {
         const message = explainError(error)
         setHealthError(message)
         setAccessFeedback(message)
+        setAccessInvalid(true)
         setConnection({ mode: "error", text: "服务不可用" })
       }
     })()
@@ -537,6 +553,7 @@ export function useDashboard() {
     health,
     healthError,
     accessFeedback,
+    accessInvalid,
     authenticating,
     authenticated,
     status,

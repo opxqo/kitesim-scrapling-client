@@ -141,12 +141,12 @@ function WorkspaceHeader({ dashboard }: { dashboard: DashboardController }) {
   }[dashboard.connection.mode]
 
   return (
-    <header className="sticky top-0 z-30 flex h-[52px] items-center border-b bg-background/95 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/85 md:px-5">
+    <header className="sticky top-0 z-30 flex min-h-[calc(3.75rem+env(safe-area-inset-top))] items-center border-b bg-background/95 px-3 pt-[env(safe-area-inset-top)] backdrop-blur supports-[backdrop-filter]:bg-background/85 md:min-h-[52px] md:px-5 md:pt-0">
       <div className="flex min-w-0 items-center gap-3">
         <AppMark />
         <div className="min-w-0 leading-none">
           <div className="truncate text-sm font-semibold tracking-tight">Kitesim Relay</div>
-          <span className="mt-1 block truncate text-[11px] text-muted-foreground">
+          <span className="mt-1 hidden truncate text-xs text-muted-foreground sm:block">
             多账户号码与验证码工作台
           </span>
         </div>
@@ -230,14 +230,16 @@ function WorkspaceHeader({ dashboard }: { dashboard: DashboardController }) {
 function ViewHeading({ dashboard }: { dashboard: DashboardController }) {
   const cacheLabel = dashboard.ordersCacheStatus
     ? CACHE_STATUS_LABEL[dashboard.ordersCacheStatus]
-    : "Blob 等待读取"
+    : dashboard.lastUpdatedAt
+      ? "缓存状态未知"
+      : "缓存等待读取"
   return (
-    <div className="flex min-h-9 flex-wrap items-center justify-between gap-2">
+    <div className="flex min-h-11 flex-wrap items-center justify-between gap-2 py-2 md:min-h-9 md:py-0">
       <div className="flex items-baseline gap-2">
         <h1 className="text-lg font-semibold tracking-tight">总控台</h1>
         <span className="hidden text-xs text-muted-foreground sm:inline">账户、号码和验证码集中处理</span>
       </div>
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <div className="flex max-w-full flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <Badge variant="outline" className="font-normal">
           <DatabaseZap data-icon="inline-start" />
           {cacheLabel}
@@ -296,16 +298,17 @@ function MetricStrip({ dashboard }: { dashboard: DashboardController }) {
   ]
 
   return (
-    <Card className="grid gap-0 py-0 sm:grid-cols-2 lg:grid-cols-4">
+    <Card className="grid grid-cols-2 gap-0 py-0 lg:grid-cols-4">
       {metrics.map((metric, index) => {
         const Icon = metric.icon
         return (
           <div
             key={metric.label}
             className={cn(
-              "flex min-h-14 items-center gap-3 px-4 py-2",
-              index > 0 && "border-t sm:border-t-0 sm:border-l",
-              index === 2 && "sm:border-l-0 lg:border-l",
+              "flex min-h-20 items-center gap-3 px-3 py-3 md:px-4 lg:min-h-14 lg:py-2",
+              index % 2 === 1 && "border-l",
+              index >= 2 && "border-t lg:border-t-0",
+              index === 2 && "lg:border-l",
             )}
           >
             <div className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted">
@@ -316,7 +319,7 @@ function MetricStrip({ dashboard }: { dashboard: DashboardController }) {
                 <span className="text-lg font-semibold tabular-nums">{metric.value}</span>
                 <span className="text-xs font-medium text-muted-foreground">{metric.label}</span>
               </div>
-              <p className="truncate text-[11px] text-muted-foreground">{metric.note}</p>
+              <p className="line-clamp-2 text-xs leading-4 text-muted-foreground">{metric.note}</p>
               {metric.label === "同步健康度" && (
                 <Progress value={healthPercentage} className="mt-1.5 h-1" />
               )}
@@ -333,7 +336,7 @@ function AccountRail({ dashboard }: { dashboard: DashboardController }) {
   const selectedAccountId = dashboard.selectedOrder?.accountId
 
   return (
-    <Card className="h-full gap-0 py-0">
+    <Card className="h-[280px] gap-0 py-0 lg:h-full">
       <CardHeader className="border-b py-3">
         <CardTitle className="text-sm">账户与号码</CardTitle>
         <CardDescription className="text-xs">每个 Token 对应独立账户</CardDescription>
@@ -370,10 +373,10 @@ function AccountRail({ dashboard }: { dashboard: DashboardController }) {
                         <span className="truncate text-sm font-medium">{group.accountLabel}</span>
                         <span className="size-1.5 rounded-full bg-emerald-500" />
                       </span>
-                      <span className="mt-1 block truncate font-mono text-[11px] font-normal text-muted-foreground">
+                      <span className="mt-1 block truncate font-mono text-xs font-normal text-muted-foreground">
                         {displayPhone(firstOrder, true)}
                       </span>
-                      <span className="mt-1 flex items-center justify-between text-[10px] font-normal text-muted-foreground">
+                      <span className="mt-1 flex items-center justify-between text-xs font-normal text-muted-foreground">
                         <span>账户 {index + 1}</span>
                         <span>{group.orders.length} 个号码</span>
                       </span>
@@ -385,7 +388,9 @@ function AccountRail({ dashboard }: { dashboard: DashboardController }) {
               <div className="px-3 py-6 text-center text-xs text-muted-foreground">
                 {dashboard.ordersCacheStatus === "empty"
                   ? "Blob 暂无号码快照，请点击刷新"
-                  : "Blob 快照中当前筛选没有号码"}
+                  : dashboard.ordersCacheStatus
+                    ? "Blob 快照中当前筛选没有号码"
+                    : "当前筛选没有号码"}
               </div>
             )}
 
@@ -395,7 +400,7 @@ function AccountRail({ dashboard }: { dashboard: DashboardController }) {
                   <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
                   <div className="min-w-0">
                     <div className="truncate font-medium">{warning.accountLabel}</div>
-                    <div className="mt-1 text-[10px] leading-4 text-muted-foreground">{warning.message}</div>
+                    <div className="mt-1 text-xs leading-5 text-muted-foreground">{warning.message}</div>
                   </div>
                 </div>
               </div>
@@ -420,43 +425,53 @@ function AccountRail({ dashboard }: { dashboard: DashboardController }) {
 }
 
 function StatusFilters({ dashboard }: { dashboard: DashboardController }) {
+  const helperId = dashboard.accountCount > 8 ? "all-status-limit" : undefined
+
   return (
-    <ToggleGroup
-      type="single"
-      variant="outline"
-      size="sm"
-      spacing={0}
-      value={dashboard.status}
-      onValueChange={(value) => value && dashboard.changeStatus(value as DashboardStatus)}
-      className="max-w-full overflow-x-auto"
-    >
-      {STATUS_ITEMS.map((item) => {
-        const count = item.value === dashboard.status
-          ? dashboard.orders.length
-          : dashboard.statusCounts[item.value]
-        const disabled = item.value === "all" && dashboard.accountCount > 8
-        return (
-          <Tooltip key={item.value}>
-            <TooltipTrigger asChild>
-              <span>
-                <ToggleGroupItem
-                  value={item.value}
-                  disabled={disabled || dashboard.loadingOrders || dashboard.loadingMessages}
-                  className="gap-1.5"
-                  aria-label={`${item.label}${count === undefined ? "" : `，${count} 个号码`}`}
-                >
-                  {item.label}
-                  <span className="text-[10px] tabular-nums text-muted-foreground">
-                    {count ?? "—"}
-                  </span>
-                </ToggleGroupItem>
-              </span>
-            </TooltipTrigger>
-            {disabled && <TooltipContent>全部状态一次最多查询 8 个账户</TooltipContent>}
-          </Tooltip>
-        )
-      })}
-    </ToggleGroup>
+    <div className="space-y-2">
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        spacing={2}
+        value={dashboard.status}
+        onValueChange={(value) => value && dashboard.changeStatus(value as DashboardStatus)}
+        className="grid w-full grid-cols-3 gap-2 md:flex md:w-fit md:flex-nowrap"
+        aria-describedby={helperId}
+      >
+        {STATUS_ITEMS.map((item) => {
+          const count = item.value === dashboard.status
+            ? dashboard.orders.length
+            : dashboard.statusCounts[item.value]
+          const disabled = item.value === "all" && dashboard.accountCount > 8
+          return (
+            <Tooltip key={item.value}>
+              <TooltipTrigger asChild>
+                <span className="min-w-0">
+                  <ToggleGroupItem
+                    value={item.value}
+                    disabled={disabled || dashboard.loadingOrders || dashboard.loadingMessages}
+                    className="w-full gap-1.5"
+                    aria-label={`${item.label}${count === undefined ? "" : `，${count} 个号码`}`}
+                  >
+                    {item.label}
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {count ?? "—"}
+                    </span>
+                  </ToggleGroupItem>
+                </span>
+              </TooltipTrigger>
+              {disabled && <TooltipContent>全部状态一次最多查询 8 个账户</TooltipContent>}
+            </Tooltip>
+          )
+        })}
+      </ToggleGroup>
+      {dashboard.accountCount > 8 && (
+        <p id={helperId} className="text-xs leading-5 text-muted-foreground md:hidden">
+          账户超过 8 个时不能一次查询全部状态。
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -480,6 +495,16 @@ function NumberTable({ dashboard }: { dashboard: DashboardController }) {
         </CardAction>
       </CardHeader>
       <CardContent className="px-3 py-2">
+        <div className="relative mb-2 lg:hidden">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-10"
+            placeholder="搜索号码或账户"
+            value={dashboard.searchQuery}
+            onChange={(event) => dashboard.setSearchQuery(event.target.value)}
+            aria-label="搜索号码或账户"
+          />
+        </div>
         <StatusFilters dashboard={dashboard} />
       </CardContent>
       <Separator />
@@ -488,12 +513,12 @@ function NumberTable({ dashboard }: { dashboard: DashboardController }) {
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-card">
               <TableRow className="hover:bg-transparent">
-                <TableHead className="h-8 pl-3 text-[11px] text-muted-foreground">号码</TableHead>
-                <TableHead className="h-8 text-[11px] text-muted-foreground">状态</TableHead>
-                <TableHead className="hidden h-8 text-[11px] text-muted-foreground lg:table-cell">
+                <TableHead className="h-8 pl-3 text-xs text-muted-foreground">号码</TableHead>
+                <TableHead className="h-8 text-xs text-muted-foreground">状态</TableHead>
+                <TableHead className="hidden h-8 text-xs text-muted-foreground lg:table-cell">
                   套餐 / 到期
                 </TableHead>
-                <TableHead className="h-8 pr-3 text-right text-[11px] text-muted-foreground">短信</TableHead>
+                <TableHead className="h-8 pr-3 text-right text-xs text-muted-foreground">短信</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -515,7 +540,7 @@ function NumberTable({ dashboard }: { dashboard: DashboardController }) {
                       <TableCell className="py-1.5 pl-2">
                         <Button
                           variant="ghost"
-                          className="h-auto max-w-full justify-start px-1.5 py-1 text-left"
+                          className="h-auto min-h-11 max-w-full justify-start px-1.5 py-1 text-left"
                           onClick={() => dashboard.selectOrder(key)}
                         >
                           <span className="grid size-8 shrink-0 place-items-center rounded-lg border bg-background">
@@ -525,7 +550,7 @@ function NumberTable({ dashboard }: { dashboard: DashboardController }) {
                             <span className="block truncate font-mono text-xs font-medium">
                               {displayPhone(order, dashboard.privacyMasked)}
                             </span>
-                            <span className="mt-0.5 block truncate text-[10px] font-normal text-muted-foreground">
+                            <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
                               {order.countryCode || "未知地区"} · {order.accountLabel || "默认账户"}
                             </span>
                           </span>
@@ -553,7 +578,9 @@ function NumberTable({ dashboard }: { dashboard: DashboardController }) {
                       ? "没有匹配的号码"
                       : dashboard.ordersCacheStatus === "empty"
                         ? "Blob 暂无号码快照，请点击右上角刷新"
-                        : "Blob 快照中当前状态没有号码"}
+                        : dashboard.ordersCacheStatus
+                          ? "Blob 快照中当前状态没有号码"
+                          : "当前状态没有号码"}
                   </TableCell>
                 </TableRow>
               )}
@@ -609,7 +636,7 @@ function CodePanel({ dashboard }: { dashboard: DashboardController }) {
                 <span>{record ? "识别自最新短信" : "最近短信中没有识别到验证码"}</span>
               </div>
             </div>
-            <div className="flex gap-1">
+            <div className="flex gap-2 md:gap-1">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -752,6 +779,45 @@ function MessageRow({
   )
 }
 
+function MessageCard({
+  message,
+  dashboard,
+}: {
+  message: KitesimMessage
+  dashboard: DashboardController
+}) {
+  const sender = message.sender || "未知发送方"
+  return (
+    <article className="p-3">
+      <div className="flex items-center gap-3">
+        <Avatar className="size-9">
+          <AvatarFallback className="bg-muted text-xs font-semibold">
+            {Array.from(sender.trim()).slice(0, 2).join("").toUpperCase() || "—"}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{sender}</div>
+          <span className="text-xs text-muted-foreground">短信</span>
+        </div>
+        <time className="shrink-0 text-xs tabular-nums text-muted-foreground">
+          {formatShortTime(message.time)}
+        </time>
+      </div>
+      <p className="mt-3 break-words whitespace-pre-wrap text-sm leading-6 text-foreground/80">
+        {message.content || "无短信正文"}
+      </p>
+      <div className="mt-3 flex min-h-11 items-center justify-between gap-3">
+        <span className="text-xs text-muted-foreground">验证码</span>
+        {message.code?.[0] ? (
+          <MessageCode code={message.code[0]} dashboard={dashboard} />
+        ) : (
+          <span className="text-xs text-muted-foreground">未识别</span>
+        )}
+      </div>
+    </article>
+  )
+}
+
 function MessageInbox({ dashboard }: { dashboard: DashboardController }) {
   return (
     <Card className="h-full min-h-0 gap-0 py-0">
@@ -766,7 +832,7 @@ function MessageInbox({ dashboard }: { dashboard: DashboardController }) {
             : "选择号码后读取短信"}
         </CardDescription>
         <CardAction>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex min-h-11 items-center gap-3 text-xs text-muted-foreground md:min-h-0 md:gap-2">
             <span className="hidden sm:inline">显示原文</span>
             <Switch
               size="sm"
@@ -779,44 +845,75 @@ function MessageInbox({ dashboard }: { dashboard: DashboardController }) {
         </CardAction>
       </CardHeader>
       <CardContent className="min-h-0 flex-1 px-0">
-        <ScrollArea className="h-[218px] lg:h-[150px]">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-card">
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="h-8 pl-3 text-[11px] text-muted-foreground">来源</TableHead>
-                <TableHead className="h-8 text-[11px] text-muted-foreground">内容</TableHead>
-                <TableHead className="h-8 text-[11px] text-muted-foreground">验证码</TableHead>
-                <TableHead className="h-8 pr-3 text-right text-[11px] text-muted-foreground">时间</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {dashboard.loadingMessages ? (
-                [0, 1, 2].map((index) => (
-                  <TableRow key={index}>
-                    <TableCell className="pl-3"><Skeleton className="h-7 w-24" /></TableCell>
-                    <TableCell><Skeleton className="h-4 w-full" /></TableCell>
-                    <TableCell><Skeleton className="h-5 w-20" /></TableCell>
-                    <TableCell className="pr-3"><Skeleton className="ml-auto h-4 w-10" /></TableCell>
-                  </TableRow>
-                ))
-              ) : dashboard.messages.length ? (
-                dashboard.messages.map((message, index) => (
-                  <MessageRow key={String(message.id ?? index)} message={message} dashboard={dashboard} />
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={4} className="h-32 text-center text-xs text-muted-foreground">
-                    {dashboard.selectedOrder
-                      ? dashboard.messageCacheStatus === "empty"
-                        ? "Blob 暂无该号码的短信快照，请点击刷新"
-                        : "Blob 快照中该号码暂时没有短信"
-                      : "先选择一个号码"}
-                  </TableCell>
+        <div className="max-h-[560px] divide-y overflow-y-auto overscroll-contain md:hidden">
+          {dashboard.loadingMessages ? (
+            [0, 1, 2].map((index) => (
+              <div key={index} className="space-y-3 p-3">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="size-9 rounded-full" />
+                  <Skeleton className="h-5 w-28" />
+                  <Skeleton className="ml-auto h-4 w-10" />
+                </div>
+                <Skeleton className="h-16 w-full" />
+              </div>
+            ))
+          ) : dashboard.messages.length ? (
+            dashboard.messages.map((message, index) => (
+              <MessageCard key={String(message.id ?? index)} message={message} dashboard={dashboard} />
+            ))
+          ) : (
+            <div className="grid min-h-32 place-items-center px-4 text-center text-sm text-muted-foreground">
+              {dashboard.selectedOrder
+                ? dashboard.messageCacheStatus === "empty"
+                  ? "Blob 暂无该号码的短信快照，请点击刷新"
+                  : "当前号码暂时没有短信"
+                : "先选择一个号码"}
+            </div>
+          )}
+        </div>
+
+        <div className="hidden md:block">
+          <ScrollArea className="h-[218px] lg:h-[150px]">
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-card">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="h-8 pl-3 text-xs text-muted-foreground">来源</TableHead>
+                  <TableHead className="h-8 text-xs text-muted-foreground">内容</TableHead>
+                  <TableHead className="h-8 text-xs text-muted-foreground">验证码</TableHead>
+                  <TableHead className="h-8 pr-3 text-right text-xs text-muted-foreground">时间</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </ScrollArea>
+              </TableHeader>
+              <TableBody>
+                {dashboard.loadingMessages ? (
+                  [0, 1, 2].map((index) => (
+                    <TableRow key={index}>
+                      <TableCell className="pl-3"><Skeleton className="h-7 w-24" /></TableCell>
+                      <TableCell><Skeleton className="h-4 w-full" /></TableCell>
+                      <TableCell><Skeleton className="h-5 w-20" /></TableCell>
+                      <TableCell className="pr-3"><Skeleton className="ml-auto h-4 w-10" /></TableCell>
+                    </TableRow>
+                  ))
+                ) : dashboard.messages.length ? (
+                  dashboard.messages.map((message, index) => (
+                    <MessageRow key={String(message.id ?? index)} message={message} dashboard={dashboard} />
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={4} className="h-32 text-center text-xs text-muted-foreground">
+                      {dashboard.selectedOrder
+                        ? dashboard.messageCacheStatus === "empty"
+                          ? "Blob 暂无该号码的短信快照，请点击刷新"
+                          : dashboard.messageCacheStatus
+                            ? "Blob 快照中该号码暂时没有短信"
+                            : "当前号码暂时没有短信"
+                        : "先选择一个号码"}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </ScrollArea>
+        </div>
       </CardContent>
     </Card>
   )
@@ -832,7 +929,7 @@ export function DashboardShell({ dashboard }: { dashboard: DashboardController }
         跳到主要内容
       </a>
       <WorkspaceHeader dashboard={dashboard} />
-      <main id="dashboard-content" className="mx-auto w-full max-w-[1600px] px-3 pt-1.5 pb-4 md:px-4">
+      <main id="dashboard-content" className="mx-auto w-full max-w-[1600px] px-3 pt-1.5 pb-[calc(1rem+env(safe-area-inset-bottom))] md:px-4">
         <ViewHeading dashboard={dashboard} />
         <div className="space-y-3">
           <MetricStrip dashboard={dashboard} />
@@ -846,12 +943,16 @@ export function DashboardShell({ dashboard }: { dashboard: DashboardController }
             </Alert>
           )}
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-[216px_minmax(0,1fr)_306px] lg:grid-rows-[260px_206px] xl:grid-cols-[226px_minmax(0,1fr)_326px]">
-            <div className="lg:row-span-2">
+            <div className="order-3 lg:order-none lg:row-span-2">
               <AccountRail dashboard={dashboard} />
             </div>
-            <NumberTable dashboard={dashboard} />
-            <CodePanel dashboard={dashboard} />
-            <div className="lg:col-span-2">
+            <div className="order-1 lg:order-none">
+              <NumberTable dashboard={dashboard} />
+            </div>
+            <div className="order-2 lg:order-none">
+              <CodePanel dashboard={dashboard} />
+            </div>
+            <div className="order-4 lg:order-none lg:col-span-2">
               <MessageInbox dashboard={dashboard} />
             </div>
           </div>

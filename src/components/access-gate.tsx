@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react"
+import { type FormEvent, useRef, useState } from "react"
 import { Eye, EyeOff, KeyRound, LockKeyhole, ShieldCheck } from "lucide-react"
 
 import { AppMark } from "@/components/app-mark"
@@ -13,17 +13,22 @@ import type { DashboardController } from "@/hooks/use-dashboard"
 export function AccessGate({ dashboard }: { dashboard: DashboardController }) {
   const [accessKey, setAccessKey] = useState("")
   const [visible, setVisible] = useState(false)
+  const accessKeyRef = useRef<HTMLInputElement>(null)
   const unavailable = Boolean(dashboard.healthError) || dashboard.health?.authConfigured === false
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const accepted = await dashboard.verifyAccess(accessKey)
-    if (accepted) setAccessKey("")
+    if (accepted) {
+      setAccessKey("")
+    } else {
+      accessKeyRef.current?.focus()
+    }
   }
 
   return (
     <div className="min-h-svh bg-muted/30">
-      <header className="flex h-14 items-center border-b bg-background px-4 md:px-6">
+      <header className="flex min-h-[calc(3.75rem+env(safe-area-inset-top))] items-center border-b bg-background px-4 pt-[env(safe-area-inset-top)] md:min-h-14 md:px-6 md:pt-0">
         <div className="flex items-center gap-3">
           <AppMark />
           <div className="leading-none">
@@ -50,7 +55,7 @@ export function AccessGate({ dashboard }: { dashboard: DashboardController }) {
 
       <main
         id="main-content"
-        className="mx-auto grid min-h-[calc(100svh-3.5rem)] max-w-5xl items-center gap-10 px-4 py-10 lg:grid-cols-[1fr_420px]"
+        className="mx-auto grid min-h-[calc(100dvh-3.75rem)] max-w-5xl items-center gap-10 px-4 pt-8 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:py-10 lg:grid-cols-[1fr_420px]"
       >
         <section className="hidden max-w-xl lg:block">
           <Badge variant="secondary" className="mb-5 font-mono text-[10px] tracking-wider">
@@ -96,6 +101,7 @@ export function AccessGate({ dashboard }: { dashboard: DashboardController }) {
                 <div className="relative">
                   <KeyRound className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
+                    ref={accessKeyRef}
                     id="dashboard-access-key"
                     name="accessKey"
                     type={visible ? "text" : "password"}
@@ -107,14 +113,15 @@ export function AccessGate({ dashboard }: { dashboard: DashboardController }) {
                     value={accessKey}
                     onChange={(event) => setAccessKey(event.target.value)}
                     placeholder="至少 12 个字符"
-                    className="h-10 pr-11 pl-10"
+                    className="h-11 pr-12 pl-10 md:h-10"
+                    aria-invalid={dashboard.accessInvalid || unavailable}
                     aria-describedby="access-feedback"
                   />
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    className="absolute top-1/2 right-2 -translate-y-1/2"
+                    className="absolute top-1/2 right-0 -translate-y-1/2 md:right-2"
                     onClick={() => setVisible((current) => !current)}
                     disabled={dashboard.authenticating || unavailable}
                     aria-label={visible ? "隐藏访问口令" : "显示访问口令"}
@@ -135,9 +142,9 @@ export function AccessGate({ dashboard }: { dashboard: DashboardController }) {
 
               <p
                 id="access-feedback"
-                role="status"
-                aria-live="polite"
-                className={`min-h-5 text-xs ${unavailable ? "text-destructive" : "text-muted-foreground"}`}
+                role={dashboard.accessInvalid || unavailable ? "alert" : "status"}
+                aria-live={dashboard.accessInvalid || unavailable ? "assertive" : "polite"}
+                className={`min-h-5 text-sm leading-5 ${dashboard.accessInvalid || unavailable ? "text-destructive" : "text-muted-foreground"}`}
               >
                 {dashboard.accessFeedback}
               </p>

@@ -108,7 +108,7 @@ function ordersRequest(refresh = false, accessKey = ACCESS_KEY) {
 
 function messageOriginFetch(snapshot = MESSAGE_SNAPSHOT) {
   return vi.fn(async (url, options) => {
-    expect(String(url)).toBe("https://example.com/api/messages-origin")
+    expect(String(url)).toBe("https://example.com/origin/messages-origin")
     const body = JSON.parse(String(options.body))
     expect(body.cacheSnapshot).toBe(true)
     expect(body.refresh).toBeUndefined()
@@ -122,7 +122,7 @@ function messageOriginFetch(snapshot = MESSAGE_SNAPSHOT) {
 
 function ordersOriginFetch(snapshot = ORDERS_SNAPSHOT) {
   return vi.fn(async (url, options) => {
-    expect(String(url)).toBe("https://example.com/api/orders-origin?status=2&limit=20")
+    expect(String(url)).toBe("https://example.com/origin/orders-origin?status=2&limit=20")
     expect(options.method).toBe("GET")
     return new Response(JSON.stringify(snapshot), {
       status: 200,
@@ -282,6 +282,33 @@ describe("EdgeOne message Blob snapshot", () => {
     expect(logger).toHaveBeenCalledWith("Dashboard cache initialization failed", {
       name: "Error",
       code: "BLOB_UNAVAILABLE",
+    })
+  })
+
+  it("reports bypass only when an explicit Blob write really fails", async () => {
+    const fetchImpl = messageOriginFetch()
+    const logger = vi.fn()
+    const store = new FakeStore()
+    store.setJSON = vi.fn(async () => {
+      throw Object.assign(new Error("write failed"), { code: "BLOB_WRITE_FAILED" })
+    })
+    const handler = createSmsCacheHandler({
+      fetchImpl,
+      getStoreImpl: () => store,
+      logger,
+    })
+
+    const response = await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, refresh: true }),
+      env: BASE_ENV,
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("X-SMS-Cache")).toBe("bypass")
+    expect((await response.json()).cacheStatus).toBe("bypass")
+    expect(logger).toHaveBeenCalledWith("Dashboard cache write failed", {
+      name: "Error",
+      code: "BLOB_WRITE_FAILED",
     })
   })
 

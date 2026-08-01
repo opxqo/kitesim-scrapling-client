@@ -122,12 +122,12 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply min-w-0 bg-background text-foreground antialiased;
+    @apply min-w-0 overflow-x-clip bg-background text-foreground antialiased;
     font-feature-settings: "ss01", "cv02", "cv03", "cv04";
-    }
+  }
   html {
-    @apply font-sans;
-    }
+    @apply min-h-dvh font-sans;
+  }
 }
 
 ::selection {

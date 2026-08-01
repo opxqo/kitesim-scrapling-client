@@ -65,7 +65,7 @@ export type OrdersResponse = {
   warnings: AccountWarning[]
   status: DashboardStatus | number
   updatedAt: string
-  cacheStatus: CacheStatus
+  cacheStatus?: CacheStatus
 }
 
 export type MessagesResponse = {
@@ -76,7 +76,7 @@ export type MessagesResponse = {
   revealCode: boolean
   showSms: boolean
   updatedAt: string
-  cacheStatus: CacheStatus
+  cacheStatus?: CacheStatus
 }
 
 export type ApiFailure = {
