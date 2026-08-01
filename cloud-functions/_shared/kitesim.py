@@ -90,9 +90,12 @@ ORDER_FILTER_TO_UPSTREAM_STATUS = {
 CODE_PATTERNS = (
     re.compile(
         r"(?:验证码|校验码|动态码|动态验证码|verification\s*code|one[- ]time\s+password|otp|code)"
-        r"[^0-9]{0,24}(\d{4,8})",
+        r"[^0-9]{0,24}(\d{2,4}(?:[\s\u00a0\-‐‑‒–—]\d{2,4}){1,2}|\d{4,8})",
         re.IGNORECASE,
     ),
+)
+SEGMENTED_DIGITS_PATTERN = re.compile(
+    r"(?<!\d)\d{2,4}(?:[\s\u00a0\-‐‑‒–—]\d{2,4}){1,2}(?!\d)"
 )
 
 # Scrapling logs full request URLs at INFO level. Kitesim's SMS endpoint places
@@ -139,8 +142,9 @@ def extract_codes(content: str) -> list[str]:
     found: list[str] = []
     for pattern in CODE_PATTERNS:
         for match in pattern.findall(content or ""):
-            if match not in found:
-                found.append(match)
+            normalized = _digits(match)
+            if 4 <= len(normalized) <= 8 and normalized not in found:
+                found.append(normalized)
 
     if not found and re.search(r"验证码|校验码|verification|one[- ]time|\botp\b|\bcode\b", content, re.I):
         for match in re.findall(r"(?<!\d)(\d{6})(?!\d)", content):
@@ -158,7 +162,11 @@ def mask_code(code: str) -> str:
 def mask_message(content: str) -> str:
     """Mask long digit runs unless the caller explicitly requests SMS text."""
 
-    return re.sub(r"\d{4,}", lambda match: "*" * len(match.group(0)), content or "")
+    masked = SEGMENTED_DIGITS_PATTERN.sub(
+        lambda match: re.sub(r"\d", "*", match.group(0)),
+        content or "",
+    )
+    return re.sub(r"\d{4,}", lambda match: "*" * len(match.group(0)), masked)
 
 
 class KitesimClient:

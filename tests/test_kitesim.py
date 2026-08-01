@@ -19,6 +19,10 @@ class KitesimCoreTests(unittest.TestCase):
         self.assertEqual(extract_codes("你的验证码为 438921，五分钟内有效"), ["438921"])
         self.assertEqual(extract_codes("Your verification code: 7788"), ["7788"])
 
+    def test_extracts_whatsapp_code_split_by_hyphen(self) -> None:
+        content = "<#> 您的 WhatsApp 验证码: 156-631 请不要与其他人共享这个密码 4sgLq1p5sV6"
+        self.assertEqual(extract_codes(content), ["156631"])
+
     def test_does_not_treat_unlabelled_number_as_code(self) -> None:
         self.assertEqual(extract_codes("Order 123456 has been completed"), [])
 
@@ -34,6 +38,17 @@ class KitesimCoreTests(unittest.TestCase):
         )
         self.assertEqual(result[0]["code"], ["4****1"])
         self.assertEqual(result[0]["content"], "验证码 ******")
+
+    def test_build_messages_masks_hyphenated_code_by_default(self) -> None:
+        content = "<#> 您的 WhatsApp 验证码: 156-631 请不要与其他人共享这个密码 4sgLq1p5sV6"
+        result = build_messages(
+            {"noteList": [{"id": 2, "caller": "WhatsApp", "content": content}]},
+            show_code=False,
+            show_sms=False,
+        )
+        self.assertEqual(result[0]["code"], ["1****1"])
+        self.assertNotIn("156-631", result[0]["content"])
+        self.assertIn("***-***", result[0]["content"])
 
     def test_client_keeps_at_least_one_request_attempt(self) -> None:
         client = KitesimClient("fake-token", retries=0)
