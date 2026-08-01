@@ -193,6 +193,13 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["items"][0]["statusLabel"], "使用中")
 
+    def test_orders_origin_alias_preserves_the_protected_python_endpoint(self) -> None:
+        response = self.client.get("/api/orders-origin?status=2", headers=AUTH_HEADERS)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["items"][0]["phoneNumber"], "+15551234567")
+        self.assertEqual(response.headers["Cache-Control"], "no-store, max-age=0")
+
     def test_orders_aggregates_multiple_token_accounts_without_exposing_tokens(self) -> None:
         configured_tokens = (
             '[{"name":"主号码","token":"token-primary-test"},'
@@ -516,6 +523,24 @@ class ApiTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["items"][0]["code"], ["4****1"])
         self.assertEqual(response.headers["Cache-Control"], "no-store, max-age=0")
+
+    def test_messages_origin_builds_all_blob_display_variants_from_one_sms_read(self) -> None:
+        response = self.client.post(
+            "/api/messages-origin",
+            headers={**AUTH_HEADERS, "Content-Type": "application/json"},
+            json={
+                "orderId": 42,
+                "phoneNumber": "+15551234567",
+                "cacheSnapshot": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertNotIn("items", payload)
+        self.assertEqual(payload["variants"]["masked"][0]["code"], ["4****1"])
+        self.assertEqual(payload["variants"]["full"][0]["code"], ["438921"])
+        self.assertIn("438921", payload["variants"]["full"][0]["content"])
 
     def test_messages_validates_input(self) -> None:
         response = self.client.post(

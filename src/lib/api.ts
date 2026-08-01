@@ -59,15 +59,20 @@ export function verifySession(accessKey: string): Promise<SessionResponse> {
   return apiRequest<SessionResponse>("/api/session", accessKey, { method: "POST" })
 }
 
-export function getOrders(accessKey: string, status: DashboardStatus): Promise<OrdersResponse> {
+export function getOrders(
+  accessKey: string,
+  status: DashboardStatus,
+  options: { refresh?: boolean } = {},
+): Promise<OrdersResponse> {
   const query = new URLSearchParams({ status, limit: "20" })
+  if (options.refresh === true) query.set("refresh", "1")
   return apiRequest<OrdersResponse>(`/api/orders?${query.toString()}`, accessKey)
 }
 
 export function getMessages(
   accessKey: string,
   order: KitesimOrder,
-  options: { revealCode: boolean; showSms: boolean },
+  options: { revealCode: boolean; showSms: boolean; refresh?: boolean },
 ): Promise<MessagesResponse> {
   return apiRequest<MessagesResponse>("/api/messages", accessKey, {
     method: "POST",
@@ -79,6 +84,7 @@ export function getMessages(
       phoneNumber: order.phoneNumber,
       revealCode: options.revealCode,
       showSms: options.showSms,
+      refresh: options.refresh === true,
     }),
   })
 }

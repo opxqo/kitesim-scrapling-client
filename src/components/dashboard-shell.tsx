@@ -15,6 +15,7 @@ import {
   Server,
   ShieldCheck,
   Smartphone,
+  TimerReset,
 } from "lucide-react"
 
 import { AppMark } from "@/components/app-mark"
@@ -34,6 +35,13 @@ import {
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
@@ -60,7 +68,7 @@ import {
   statusLabel,
 } from "@/lib/dashboard"
 import { cn } from "@/lib/utils"
-import type { DashboardStatus, KitesimMessage, KitesimOrder } from "@/types"
+import type { CacheStatus, DashboardStatus, KitesimMessage, KitesimOrder } from "@/types"
 
 const STATUS_ITEMS: Array<{ value: DashboardStatus; label: string }> = [
   { value: "all", label: "全部" },
@@ -79,6 +87,14 @@ const STATUS_TONE: Record<string, string> = {
   已退款: "border-border bg-muted text-muted-foreground",
 }
 
+const CACHE_STATUS_LABEL: Record<CacheStatus, string> = {
+  hit: "Blob 快照",
+  stale: "Blob 旧快照",
+  empty: "Blob 无快照",
+  refreshed: "Blob 已更新",
+  bypass: "Blob 写入失败",
+}
+
 function displayPhone(order: KitesimOrder, masked: boolean) {
   return masked ? maskPhoneNumber(order.phoneNumber) : order.phoneNumber
 }
@@ -90,6 +106,27 @@ function StatusBadge({ order }: { order: KitesimOrder }) {
       <span className="size-1.5 rounded-full bg-current" />
       {label}
     </Badge>
+  )
+}
+
+function AutoRefreshSelect({ dashboard }: { dashboard: DashboardController }) {
+  return (
+    <Select
+      value={String(dashboard.autoRefreshSeconds)}
+      onValueChange={(value) => dashboard.changeAutoRefreshSeconds(Number(value))}
+      disabled={dashboard.loadingOrders || dashboard.loadingMessages}
+    >
+      <SelectTrigger size="sm" className="hidden w-[108px] sm:flex" aria-label="定时刷新周期">
+        <TimerReset className="text-muted-foreground" />
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent align="end">
+        <SelectItem value="0">手动刷新</SelectItem>
+        <SelectItem value="30">每 30 秒</SelectItem>
+        <SelectItem value="60">每分钟</SelectItem>
+        <SelectItem value="300">每 5 分钟</SelectItem>
+      </SelectContent>
+    </Select>
   )
 }
 
@@ -129,6 +166,7 @@ function WorkspaceHeader({ dashboard }: { dashboard: DashboardController }) {
           {dashboard.lastUpdatedAt ? `同步于 ${formatShortTime(dashboard.lastUpdatedAt)}` : "尚未同步"}
         </span>
         <Separator orientation="vertical" className="mx-1 hidden h-5 md:block" />
+        <AutoRefreshSelect dashboard={dashboard} />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -167,14 +205,14 @@ function WorkspaceHeader({ dashboard }: { dashboard: DashboardController }) {
             <Button
               variant="outline"
               size="icon"
-              onClick={dashboard.refresh}
+              onClick={() => dashboard.refresh()}
               disabled={busy}
               aria-label="刷新全部账户"
             >
               <RefreshCw className={cn(busy && "animate-spin")} />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>刷新当前筛选和所选号码</TooltipContent>
+          <TooltipContent>从 Kitesim 刷新当前数据并回写 Blob</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -190,6 +228,9 @@ function WorkspaceHeader({ dashboard }: { dashboard: DashboardController }) {
 }
 
 function ViewHeading({ dashboard }: { dashboard: DashboardController }) {
+  const cacheLabel = dashboard.ordersCacheStatus
+    ? CACHE_STATUS_LABEL[dashboard.ordersCacheStatus]
+    : "Blob 等待读取"
   return (
     <div className="flex min-h-9 flex-wrap items-center justify-between gap-2">
       <div className="flex items-baseline gap-2">
@@ -199,6 +240,9 @@ function ViewHeading({ dashboard }: { dashboard: DashboardController }) {
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <Badge variant="outline" className="font-normal">
           <DatabaseZap data-icon="inline-start" />
+          {cacheLabel}
+        </Badge>
+        <Badge variant="outline" className="font-normal">
           {dashboard.accountCount} 个 Token
         </Badge>
         <span className="hidden items-center gap-1.5 sm:flex">
@@ -338,7 +382,11 @@ function AccountRail({ dashboard }: { dashboard: DashboardController }) {
                 )
               })
             ) : (
-              <div className="px-3 py-6 text-center text-xs text-muted-foreground">当前筛选没有号码</div>
+              <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+                {dashboard.ordersCacheStatus === "empty"
+                  ? "Blob 暂无号码快照，请点击刷新"
+                  : "Blob 快照中当前筛选没有号码"}
+              </div>
             )}
 
             {dashboard.warnings.map((warning) => (
@@ -364,7 +412,7 @@ function AccountRail({ dashboard }: { dashboard: DashboardController }) {
         </div>
         <div className="flex items-center justify-between text-xs">
           <span className="text-muted-foreground">数据模式</span>
-          <span className="font-medium">只读 GET</span>
+          <span className="font-medium">Blob 优先</span>
         </div>
       </CardFooter>
     </Card>
@@ -417,7 +465,7 @@ function NumberTable({ dashboard }: { dashboard: DashboardController }) {
     <Card className="h-full gap-0 py-0">
       <CardHeader className="border-b py-3">
         <CardTitle className="text-sm">号码概览</CardTitle>
-        <CardDescription className="text-xs">跨 Token 聚合查询与状态筛选</CardDescription>
+        <CardDescription className="text-xs">Blob 快照中的跨 Token 聚合与状态筛选</CardDescription>
         <CardAction>
           <div className="relative hidden lg:block">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -501,7 +549,11 @@ function NumberTable({ dashboard }: { dashboard: DashboardController }) {
               ) : (
                 <TableRow>
                   <TableCell colSpan={4} className="h-24 text-center text-xs text-muted-foreground">
-                    {dashboard.searchQuery ? "没有匹配的号码" : "当前状态没有号码"}
+                    {dashboard.searchQuery
+                      ? "没有匹配的号码"
+                      : dashboard.ordersCacheStatus === "empty"
+                        ? "Blob 暂无号码快照，请点击右上角刷新"
+                        : "Blob 快照中当前状态没有号码"}
                   </TableCell>
                 </TableRow>
               )}
@@ -570,7 +622,7 @@ function CodePanel({ dashboard }: { dashboard: DashboardController }) {
                     {dashboard.revealCode ? <EyeOff /> : <Eye />}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>{dashboard.revealCode ? "重新请求掩码验证码" : "向服务端请求完整验证码"}</TooltipContent>
+                <TooltipContent>{dashboard.revealCode ? "从 Blob 显示掩码验证码" : "从 Blob 显示完整验证码"}</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -754,7 +806,11 @@ function MessageInbox({ dashboard }: { dashboard: DashboardController }) {
               ) : (
                 <TableRow>
                   <TableCell colSpan={4} className="h-32 text-center text-xs text-muted-foreground">
-                    {dashboard.selectedOrder ? "这个号码暂时没有短信" : "先选择一个号码"}
+                    {dashboard.selectedOrder
+                      ? dashboard.messageCacheStatus === "empty"
+                        ? "Blob 暂无该号码的短信快照，请点击刷新"
+                        : "Blob 快照中该号码暂时没有短信"
+                      : "先选择一个号码"}
                   </TableCell>
                 </TableRow>
               )}

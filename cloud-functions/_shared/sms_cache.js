@@ -10,14 +10,15 @@ import { getStore } from "@edgeone/pages-blob"
 
 
 const ACCESS_KEY_MIN_LENGTH = 12
-const CACHE_RECORD_VERSION = 1
 const CACHE_ENVELOPE_VERSION = 1
+const CACHE_RECORD_VERSION = 2
 const CACHE_STORE_NAME = "kitesim-sms-cache"
 const DEFAULT_CACHE_TTL_SECONDS = 20
 const MIN_CACHE_TTL_SECONDS = 5
 const MAX_CACHE_TTL_SECONDS = 300
 const MAX_REQUEST_BODY_BYTES = 8 * 1024
-const ORIGIN_PATH = "/api/messages-origin"
+const MESSAGE_ORIGIN_PATH = "/api/messages-origin"
+const ORDERS_ORIGIN_PATH = "/api/orders-origin"
 const PHONE_PATTERN = /^\+?\d{6,20}$/
 
 
@@ -42,7 +43,10 @@ function apiHeaders(cacheStatus = "") {
 
 
 function jsonResponse(payload, status = 200, cacheStatus = "") {
-  return new Response(JSON.stringify(payload), {
+  const body = cacheStatus && payload && typeof payload === "object" && !Array.isArray(payload)
+    ? { ...payload, cacheStatus }
+    : payload
+  return new Response(JSON.stringify(body), {
     status,
     headers: apiHeaders(cacheStatus),
   })
@@ -73,13 +77,19 @@ function secretsEqual(left, right) {
 function authorizeRequest(context, request) {
   const expected = environmentValue(context, "DASHBOARD_ACCESS_KEY")
   if (expected.length < ACCESS_KEY_MIN_LENGTH) {
-    return errorResponse("服务端尚未配置安全访问口令", 503, "configuration")
+    return {
+      expected,
+      failure: errorResponse("服务端尚未配置安全访问口令", 503, "configuration"),
+    }
   }
   const supplied = providedAccessKey(request)
   if (!supplied || !secretsEqual(supplied, expected)) {
-    return errorResponse("访问口令无效", 401, "dashboard_auth")
+    return {
+      expected,
+      failure: errorResponse("访问口令无效", 401, "dashboard_auth"),
+    }
   }
-  return null
+  return { expected, failure: null }
 }
 
 
@@ -99,35 +109,59 @@ function encryptionKey(context) {
 }
 
 
-function cacheablePayload(payload) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false
-  const accountId = String(payload.accountId || "").trim()
-  const messageHandle = String(payload.messageHandle || "").trim()
-  const orderId = String(payload.orderId || "").trim()
-  const phoneNumber = String(payload.phoneNumber || "").trim()
-  return Boolean(
-    accountId
-      && accountId.length <= 64
-      && messageHandle
-      && messageHandle.length <= 128
-      && orderId
-      && orderId.length <= 64
-      && PHONE_PATTERN.test(phoneNumber),
-  )
+function cacheWarning(logger, operation, error) {
+  logger(`Dashboard cache ${operation} failed`, {
+    name: error instanceof Error ? error.name : "UnknownError",
+    code: error && typeof error === "object" && "code" in error ? String(error.code) : "",
+  })
 }
 
 
-export function createSmsCacheKey(payload) {
-  const identity = JSON.stringify([
-    String(payload.accountId || "").trim(),
-    String(payload.messageHandle || "").trim(),
-    String(payload.orderId || "").trim(),
-    String(payload.phoneNumber || "").trim(),
-    payload.revealCode === true,
-    payload.showSms === true,
-  ])
-  const digest = createHash("sha256").update(identity, "utf8").digest("hex")
-  return `sms/v1/${digest}.json`
+function requestHeaders(request, contentType = false) {
+  const headers = new Headers({ "Accept": "application/json" })
+  if (contentType) headers.set("Content-Type", "application/json")
+  const authorization = request.headers.get("Authorization")
+  const dashboardKey = request.headers.get("X-Dashboard-Key")
+  if (authorization) headers.set("Authorization", authorization)
+  if (dashboardKey) headers.set("X-Dashboard-Key", dashboardKey)
+  return headers
+}
+
+
+async function fetchJson(fetchImpl, url, options, cacheStatus) {
+  let response
+  try {
+    response = await fetchImpl(url, options)
+  } catch {
+    return {
+      ok: false,
+      status: 502,
+      payload: { error: "后端服务暂时不可用", kind: "upstream" },
+      response: errorResponse("后端服务暂时不可用", 502, "upstream", cacheStatus),
+    }
+  }
+
+  const text = await response.text()
+  let payload = null
+  try {
+    payload = JSON.parse(text)
+  } catch {
+    // Python origins normally return JSON. Invalid payloads become a redacted gateway error.
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {
+      ok: false,
+      status: 502,
+      payload: null,
+      response: errorResponse("后端接口返回格式无效", 502, "upstream", cacheStatus),
+    }
+  }
+  return {
+    ok: response.ok,
+    status: response.status,
+    payload,
+    response: jsonResponse(payload, response.status, cacheStatus),
+  }
 }
 
 
@@ -172,71 +206,174 @@ function decryptRecord(envelope, key, objectKey) {
 }
 
 
-function validCachedRecord(record) {
+function buildRecord(payload, now, ttlSeconds) {
+  return {
+    version: CACHE_RECORD_VERSION,
+    cachedAt: now,
+    expiresAt: now + ttlSeconds * 1000,
+    payload,
+  }
+}
+
+
+function validRecord(record, validatePayload) {
   return Boolean(
     record
       && typeof record === "object"
       && record.version === CACHE_RECORD_VERSION
       && Number.isFinite(record.cachedAt)
       && Number.isFinite(record.expiresAt)
-      && record.payload
-      && typeof record.payload === "object"
-      && Array.isArray(record.payload.items),
+      && validatePayload(record.payload),
   )
 }
 
 
-function cacheWarning(logger, operation, error) {
-  logger(`SMS cache ${operation} failed`, {
-    name: error instanceof Error ? error.name : "UnknownError",
-    code: error && typeof error === "object" && "code" in error ? String(error.code) : "",
-  })
+function recordStatus(record, now) {
+  return record.expiresAt > now ? "hit" : "stale"
 }
 
 
-async function fetchOrigin(request, bodyText, fetchImpl, cacheStatus) {
-  const originUrl = new URL(ORIGIN_PATH, request.url)
-  const headers = new Headers({
-    "Accept": "application/json",
-    "Content-Type": "application/json",
-  })
-  const authorization = request.headers.get("Authorization")
-  const dashboardKey = request.headers.get("X-Dashboard-Key")
-  if (authorization) headers.set("Authorization", authorization)
-  if (dashboardKey) headers.set("X-Dashboard-Key", dashboardKey)
-
-  let originResponse
+function cacheStore(getStoreImpl, logger) {
   try {
-    originResponse = await fetchImpl(originUrl, {
-      method: "POST",
-      headers,
-      body: bodyText,
+    return getStoreImpl(CACHE_STORE_NAME)
+  } catch (error) {
+    cacheWarning(logger, "initialization", error)
+    return null
+  }
+}
+
+
+async function readRecord(store, objectKey, key, logger) {
+  let envelope
+  try {
+    envelope = await store.get(objectKey, { type: "json" })
+  } catch (error) {
+    cacheWarning(logger, "read", error)
+    return { record: null, unavailable: true }
+  }
+  if (!envelope) return { record: null, unavailable: false }
+  try {
+    return { record: decryptRecord(envelope, key, objectKey), unavailable: false }
+  } catch (error) {
+    cacheWarning(logger, "decrypt", error)
+    return { record: null, unavailable: false }
+  }
+}
+
+
+async function writeRecord(store, objectKey, record, key, ttlSeconds, randomBytesImpl, logger) {
+  if (!store || !key) return false
+  const envelope = encryptRecord(record, key, objectKey, randomBytesImpl)
+  try {
+    await store.setJSON(objectKey, envelope, {
+      cacheControl: `max-age=${ttlSeconds}, stale-while-revalidate=${ttlSeconds}`,
     })
-  } catch {
-    return {
-      response: errorResponse("短信服务暂时不可用", 502, "upstream", cacheStatus),
-      payload: null,
-      text: "",
-      ok: false,
-    }
+    return true
+  } catch (error) {
+    cacheWarning(logger, "write", error)
+    return false
   }
+}
 
-  const text = await originResponse.text()
-  let payload = null
-  try {
-    payload = JSON.parse(text)
-  } catch {
-    // The Python origin normally returns JSON. Preserve its redacted response if it does not.
-  }
-  return {
-    response: new Response(text, {
-      status: originResponse.status,
-      headers: apiHeaders(cacheStatus),
-    }),
-    payload,
-    text,
-    ok: originResponse.ok,
-  }
+
+function messagePayloadCacheable(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false
+  const accountId = String(payload.accountId || "").trim()
+  const messageHandle = String(payload.messageHandle || "").trim()
+  const orderId = String(payload.orderId || "").trim()
+  const phoneNumber = String(payload.phoneNumber || "").trim()
+  return Boolean(
+    accountId
+      && accountId.length <= 64
+      && messageHandle
+      && messageHandle.length <= 128
+      && orderId
+      && orderId.length <= 64
+      && PHONE_PATTERN.test(phoneNumber),
+  )
+}
+
+
+export function createSmsCacheKey(payload) {
+  const identity = JSON.stringify([
+    String(payload.accountId || "").trim(),
+    String(payload.messageHandle || "").trim(),
+    String(payload.orderId || "").trim(),
+    String(payload.phoneNumber || "").trim(),
+  ])
+  const digest = createHash("sha256").update(identity, "utf8").digest("hex")
+  return `sms/v2/${digest}.json`
+}
+
+
+function messageVariantName(payload) {
+  if (payload.revealCode === true && payload.showSms === true) return "full"
+  if (payload.revealCode === true) return "code"
+  if (payload.showSms === true) return "sms"
+  return "masked"
+}
+
+
+function validMessageSnapshot(snapshot) {
+  return Boolean(
+    snapshot
+      && typeof snapshot === "object"
+      && snapshot.variants
+      && typeof snapshot.variants === "object"
+      && ["masked", "code", "sms", "full"].every((name) => Array.isArray(snapshot.variants[name])),
+  )
+}
+
+
+function messageResponse(snapshot, requestPayload, cacheStatus) {
+  const items = snapshot.variants[messageVariantName(requestPayload)]
+  return jsonResponse(
+    {
+      items,
+      count: items.length,
+      accountId: snapshot.accountId || String(requestPayload.accountId || ""),
+      accountLabel: snapshot.accountLabel || "",
+      revealCode: requestPayload.revealCode === true,
+      showSms: requestPayload.showSms === true,
+      updatedAt: snapshot.updatedAt || "",
+    },
+    200,
+    cacheStatus,
+  )
+}
+
+
+function emptyMessageResponse(payload) {
+  return jsonResponse(
+    {
+      items: [],
+      count: 0,
+      accountId: String(payload.accountId || ""),
+      accountLabel: "",
+      revealCode: payload.revealCode === true,
+      showSms: payload.showSms === true,
+      updatedAt: "",
+    },
+    200,
+    "empty",
+  )
+}
+
+
+async function fetchMessageSnapshot(request, payload, fetchImpl, cacheStatus) {
+  const originUrl = new URL(MESSAGE_ORIGIN_PATH, request.url)
+  const originPayload = { ...payload, cacheSnapshot: true }
+  delete originPayload.refresh
+  return fetchJson(
+    fetchImpl,
+    originUrl,
+    {
+      method: "POST",
+      headers: requestHeaders(request, true),
+      body: JSON.stringify(originPayload),
+    },
+    cacheStatus,
+  )
 }
 
 
@@ -253,14 +390,13 @@ export function createSmsCacheHandler(dependencies = {}) {
       return errorResponse("仅支持 POST 请求", 405, "method")
     }
 
-    const authorizationFailure = authorizeRequest(context, request)
-    if (authorizationFailure) return authorizationFailure
+    const authorization = authorizeRequest(context, request)
+    if (authorization.failure) return authorization.failure
 
     const declaredLength = Number.parseInt(request.headers.get("Content-Length") || "0", 10)
     if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BODY_BYTES) {
       return errorResponse("请求体过大", 413, "validation")
     }
-
     const bodyText = await request.text()
     if (Buffer.byteLength(bodyText, "utf8") > MAX_REQUEST_BODY_BYTES) {
       return errorResponse("请求体过大", 413, "validation")
@@ -272,64 +408,170 @@ export function createSmsCacheHandler(dependencies = {}) {
     } catch {
       return errorResponse("请求体必须是 JSON 对象", 400, "validation")
     }
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      return errorResponse("请求体必须是 JSON 对象", 400, "validation")
-    }
-
-    const key = encryptionKey(context)
-    if (!key || !cacheablePayload(payload)) {
-      const origin = await fetchOrigin(request, bodyText, fetchImpl, "bypass")
-      return origin.response
+    if (!messagePayloadCacheable(payload)) {
+      return errorResponse("短信缓存请求参数无效", 400, "validation")
     }
 
     const objectKey = createSmsCacheKey(payload)
-    const now = nowImpl()
+    const key = encryptionKey(context)
     const ttlSeconds = cacheTtlSeconds(context)
-    let store = null
-    let envelope = null
+    const now = nowImpl()
+    const refresh = payload.refresh === true
 
-    try {
-      store = getStoreImpl(CACHE_STORE_NAME)
-      envelope = await store.get(objectKey, { type: "json" })
-    } catch (error) {
-      cacheWarning(logger, "read", error)
-      store = null
-    }
-
-    if (store && envelope) {
-      try {
-        const record = decryptRecord(envelope, key, objectKey)
-        if (validCachedRecord(record) && record.expiresAt > now) {
-          return jsonResponse(record.payload, 200, "hit")
-        }
-      } catch (error) {
-        cacheWarning(logger, "decrypt", error)
+    if (refresh) {
+      const origin = await fetchMessageSnapshot(request, payload, fetchImpl, "refresh")
+      if (!origin.ok) return origin.response
+      if (!validMessageSnapshot(origin.payload)) {
+        return errorResponse("短信回源快照格式无效", 502, "upstream", "refresh")
       }
+
+      const store = key ? cacheStore(getStoreImpl, logger) : null
+      const stored = await writeRecord(
+        store,
+        objectKey,
+        buildRecord(origin.payload, now, ttlSeconds),
+        key,
+        ttlSeconds,
+        randomBytesImpl,
+        logger,
+      )
+      return messageResponse(origin.payload, payload, stored ? "refreshed" : "bypass")
     }
 
-    const cacheStatus = store ? "miss" : "bypass"
-    const origin = await fetchOrigin(request, bodyText, fetchImpl, cacheStatus)
-    if (!origin.ok || !origin.payload || !Array.isArray(origin.payload.items)) {
-      return origin.response
+    if (!key) {
+      return errorResponse("服务端尚未配置短信缓存加密密钥", 503, "configuration")
+    }
+    const store = cacheStore(getStoreImpl, logger)
+    if (!store) {
+      return errorResponse("Blob 缓存暂时不可用", 503, "storage")
     }
 
-    if (store) {
-      const record = {
-        version: CACHE_RECORD_VERSION,
-        cachedAt: now,
-        expiresAt: now + ttlSeconds * 1000,
-        payload: origin.payload,
+    const cached = await readRecord(store, objectKey, key, logger)
+    if (cached.unavailable) {
+      return errorResponse("Blob 缓存读取失败", 503, "storage")
+    }
+    if (!validRecord(cached.record, validMessageSnapshot)) {
+      return emptyMessageResponse(payload)
+    }
+    return messageResponse(cached.record.payload, payload, recordStatus(cached.record, now))
+  }
+}
+
+
+function parseOrdersQuery(request) {
+  const url = new URL(request.url)
+  const rawStatus = (url.searchParams.get("status") || "2").trim().toLowerCase()
+  const status = rawStatus === "all" ? "all" : Number.parseInt(rawStatus, 10)
+  if (status !== "all" && (!Number.isInteger(status) || status < 0 || status > 4)) return null
+  const limit = Number.parseInt(url.searchParams.get("limit") || "20", 10)
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20) return null
+  return { status, limit, refresh: ["1", "true"].includes(url.searchParams.get("refresh") || "") }
+}
+
+
+export function createOrdersCacheKey(query, accessKey) {
+  const identity = JSON.stringify([accessKey, query.status, query.limit])
+  const digest = createHash("sha256").update(identity, "utf8").digest("hex")
+  return `orders/v1/${digest}.json`
+}
+
+
+function validOrdersSnapshot(snapshot) {
+  return Boolean(
+    snapshot
+      && typeof snapshot === "object"
+      && Array.isArray(snapshot.items)
+      && Array.isArray(snapshot.warnings)
+      && Number.isInteger(snapshot.accountCount)
+      && Number.isInteger(snapshot.failedAccountCount),
+  )
+}
+
+
+function emptyOrdersResponse(query) {
+  return jsonResponse(
+    {
+      items: [],
+      count: 0,
+      hasMore: false,
+      accountCount: 0,
+      failedAccountCount: 0,
+      partial: false,
+      warnings: [],
+      status: query.status,
+      updatedAt: "",
+    },
+    200,
+    "empty",
+  )
+}
+
+
+async function fetchOrdersSnapshot(request, fetchImpl, cacheStatus) {
+  const originUrl = new URL(request.url)
+  originUrl.pathname = ORDERS_ORIGIN_PATH
+  originUrl.searchParams.delete("refresh")
+  return fetchJson(
+    fetchImpl,
+    originUrl,
+    { method: "GET", headers: requestHeaders(request) },
+    cacheStatus,
+  )
+}
+
+
+export function createOrdersCacheHandler(dependencies = {}) {
+  const getStoreImpl = dependencies.getStoreImpl || getStore
+  const fetchImpl = dependencies.fetchImpl || globalThis.fetch
+  const nowImpl = dependencies.nowImpl || Date.now
+  const randomBytesImpl = dependencies.randomBytesImpl || randomBytes
+  const logger = dependencies.logger || console.warn
+
+  return async function onRequest(context) {
+    const request = context?.request
+    if (!request || request.method !== "GET") {
+      return errorResponse("仅支持 GET 请求", 405, "method")
+    }
+
+    const authorization = authorizeRequest(context, request)
+    if (authorization.failure) return authorization.failure
+    const query = parseOrdersQuery(request)
+    if (!query) return errorResponse("订单缓存查询参数无效", 400, "validation")
+
+    const objectKey = createOrdersCacheKey(query, authorization.expected)
+    const key = encryptionKey(context)
+    const ttlSeconds = cacheTtlSeconds(context)
+    const now = nowImpl()
+
+    if (query.refresh) {
+      const origin = await fetchOrdersSnapshot(request, fetchImpl, "refresh")
+      if (!origin.ok) return origin.response
+      if (!validOrdersSnapshot(origin.payload)) {
+        return errorResponse("号码回源快照格式无效", 502, "upstream", "refresh")
       }
-      const encryptedEnvelope = encryptRecord(record, key, objectKey, randomBytesImpl)
-      try {
-        await store.setJSON(objectKey, encryptedEnvelope, {
-          cacheControl: `max-age=${ttlSeconds}, stale-while-revalidate=${ttlSeconds}`,
-        })
-      } catch (error) {
-        cacheWarning(logger, "write", error)
-      }
+
+      const store = key ? cacheStore(getStoreImpl, logger) : null
+      const stored = await writeRecord(
+        store,
+        objectKey,
+        buildRecord(origin.payload, now, ttlSeconds),
+        key,
+        ttlSeconds,
+        randomBytesImpl,
+        logger,
+      )
+      return jsonResponse(origin.payload, 200, stored ? "refreshed" : "bypass")
     }
 
-    return origin.response
+    if (!key) {
+      return errorResponse("服务端尚未配置缓存加密密钥", 503, "configuration")
+    }
+    const store = cacheStore(getStoreImpl, logger)
+    if (!store) return errorResponse("Blob 缓存暂时不可用", 503, "storage")
+
+    const cached = await readRecord(store, objectKey, key, logger)
+    if (cached.unavailable) return errorResponse("Blob 缓存读取失败", 503, "storage")
+    if (!validRecord(cached.record, validOrdersSnapshot)) return emptyOrdersResponse(query)
+    return jsonResponse(cached.record.payload, 200, recordStatus(cached.record, now))
   }
 }

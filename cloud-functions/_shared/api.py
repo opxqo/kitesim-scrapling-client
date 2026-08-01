@@ -208,6 +208,7 @@ def create_api_blueprint() -> Blueprint:
         return jsonify({"ok": True, "scope": "read-only", "verifiedAt": _utc_now()})
 
     @api.get("/orders")
+    @api.get("/orders-origin")
     @_protected
     def orders() -> tuple[Response, int] | Response:
         status, all_status = _parse_status()
@@ -318,6 +319,7 @@ def create_api_blueprint() -> Blueprint:
 
         show_code = payload.get("revealCode") is True
         show_sms = payload.get("showSms") is True
+        cache_snapshot = payload.get("cacheSnapshot") is True
         try:
             accounts = _kitesim_accounts()
             if account_id:
@@ -341,6 +343,43 @@ def create_api_blueprint() -> Blueprint:
 
             client = _kitesim_client(account)
             sms_data = client.get_phone_sms(order_id, phone_number)
+            updated_at = _utc_now()
+            if cache_snapshot:
+                variants = {
+                    "masked": build_messages(
+                        sms_data,
+                        show_code=False,
+                        show_sms=False,
+                        limit=20,
+                    ),
+                    "code": build_messages(
+                        sms_data,
+                        show_code=True,
+                        show_sms=False,
+                        limit=20,
+                    ),
+                    "sms": build_messages(
+                        sms_data,
+                        show_code=False,
+                        show_sms=True,
+                        limit=20,
+                    ),
+                    "full": build_messages(
+                        sms_data,
+                        show_code=True,
+                        show_sms=True,
+                        limit=20,
+                    ),
+                }
+                return jsonify(
+                    {
+                        "accountId": account.id,
+                        "accountLabel": account.label,
+                        "variants": variants,
+                        "updatedAt": updated_at,
+                    }
+                )
+
             items = build_messages(
                 sms_data,
                 show_code=show_code,
@@ -355,7 +394,7 @@ def create_api_blueprint() -> Blueprint:
                     "accountLabel": account.label,
                     "revealCode": show_code,
                     "showSms": show_sms,
-                    "updatedAt": _utc_now(),
+                    "updatedAt": updated_at,
                 }
             )
         except Exception as exc:  # converted to a redacted API response below

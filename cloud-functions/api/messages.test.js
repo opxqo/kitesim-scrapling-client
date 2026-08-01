@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 
 import {
+  createOrdersCacheHandler,
   createSmsCacheHandler,
   createSmsCacheKey,
 } from "../_shared/sms_cache.js"
@@ -21,22 +22,48 @@ const REQUEST_PAYLOAD = {
   revealCode: false,
   showSms: false,
 }
-const ORIGIN_PAYLOAD = {
+const MASKED_MESSAGE = {
+  id: 1,
+  sender: "WhatsApp",
+  recipient: "+15551234567",
+  time: "2026-08-01T10:00:00Z",
+  code: ["4****1"],
+  content: "Your verification code is ******",
+}
+const FULL_MESSAGE = {
+  ...MASKED_MESSAGE,
+  code: ["438921"],
+  content: "Your verification code is 438921",
+}
+const MESSAGE_SNAPSHOT = {
+  accountId: "acct_test",
+  accountLabel: "测试账户",
+  variants: {
+    masked: [MASKED_MESSAGE],
+    code: [{ ...MASKED_MESSAGE, code: ["438921"] }],
+    sms: [{ ...FULL_MESSAGE, code: ["4****1"] }],
+    full: [FULL_MESSAGE],
+  },
+  updatedAt: "2026-08-01T10:00:00Z",
+}
+const ORDERS_SNAPSHOT = {
   items: [
     {
-      id: 1,
-      sender: "WhatsApp",
-      recipient: "+15551234567",
-      time: "2026-08-01T10:00:00Z",
-      code: ["4****1"],
-      content: "Your verification code is ******",
+      id: "order-42",
+      phoneNumber: "+15551234567",
+      statusLabel: "使用中",
+      accountId: "acct_test",
+      accountLabel: "测试账户",
+      messageHandle: "msg_signed_test_handle",
     },
   ],
   count: 1,
-  accountId: "acct_test",
-  accountLabel: "测试账户",
-  revealCode: false,
-  showSms: false,
+  hasMore: false,
+  accountCount: 1,
+  failedAccountCount: 0,
+  partial: false,
+  warnings: [],
+  status: 2,
   updatedAt: "2026-08-01T10:00:00Z",
 }
 
@@ -58,7 +85,7 @@ class FakeStore {
 }
 
 
-function requestFor(payload = REQUEST_PAYLOAD, accessKey = ACCESS_KEY) {
+function messageRequest(payload = REQUEST_PAYLOAD, accessKey = ACCESS_KEY) {
   return new Request("https://example.com/api/messages", {
     method: "POST",
     headers: {
@@ -70,10 +97,22 @@ function requestFor(payload = REQUEST_PAYLOAD, accessKey = ACCESS_KEY) {
 }
 
 
-function originFetch(payload = ORIGIN_PAYLOAD) {
-  return vi.fn(async (url) => {
+function ordersRequest(refresh = false, accessKey = ACCESS_KEY) {
+  const url = new URL("https://example.com/api/orders?status=2&limit=20")
+  if (refresh) url.searchParams.set("refresh", "1")
+  return new Request(url, {
+    headers: { "Authorization": `Bearer ${accessKey}` },
+  })
+}
+
+
+function messageOriginFetch(snapshot = MESSAGE_SNAPSHOT) {
+  return vi.fn(async (url, options) => {
     expect(String(url)).toBe("https://example.com/api/messages-origin")
-    return new Response(JSON.stringify(payload), {
+    const body = JSON.parse(String(options.body))
+    expect(body.cacheSnapshot).toBe(true)
+    expect(body.refresh).toBeUndefined()
+    return new Response(JSON.stringify(snapshot), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     })
@@ -81,14 +120,44 @@ function originFetch(payload = ORIGIN_PAYLOAD) {
 }
 
 
-describe("EdgeOne SMS Blob cache", () => {
+function ordersOriginFetch(snapshot = ORDERS_SNAPSHOT) {
+  return vi.fn(async (url, options) => {
+    expect(String(url)).toBe("https://example.com/api/orders-origin?status=2&limit=20")
+    expect(options.method).toBe("GET")
+    return new Response(JSON.stringify(snapshot), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })
+  })
+}
+
+
+describe("EdgeOne message Blob snapshot", () => {
+  it("does not contact the Python origin during a cache-only miss", async () => {
+    const store = new FakeStore()
+    const fetchImpl = messageOriginFetch()
+    const handler = createSmsCacheHandler({
+      fetchImpl,
+      getStoreImpl: () => store,
+      nowImpl: () => 900_000,
+    })
+
+    const response = await handler({ request: messageRequest(), env: BASE_ENV })
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("X-SMS-Cache")).toBe("empty")
+    expect(payload).toMatchObject({ items: [], count: 0, cacheStatus: "empty" })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it("rejects an invalid dashboard key before touching Blob or the origin", async () => {
-    const fetchImpl = originFetch()
+    const fetchImpl = messageOriginFetch()
     const getStoreImpl = vi.fn(() => new FakeStore())
     const handler = createSmsCacheHandler({ fetchImpl, getStoreImpl })
 
     const response = await handler({
-      request: requestFor(REQUEST_PAYLOAD, "wrong-dashboard-key"),
+      request: messageRequest(REQUEST_PAYLOAD, "wrong-dashboard-key"),
       env: BASE_ENV,
     })
 
@@ -98,9 +167,9 @@ describe("EdgeOne SMS Blob cache", () => {
     expect(getStoreImpl).not.toHaveBeenCalled()
   })
 
-  it("writes an encrypted response on a cache miss", async () => {
+  it("calls the origin and writes one encrypted multi-variant snapshot on explicit refresh", async () => {
     const store = new FakeStore()
-    const fetchImpl = originFetch()
+    const fetchImpl = messageOriginFetch()
     const handler = createSmsCacheHandler({
       fetchImpl,
       getStoreImpl: () => store,
@@ -108,40 +177,56 @@ describe("EdgeOne SMS Blob cache", () => {
       randomBytesImpl: () => Buffer.alloc(12, 3),
     })
 
-    const response = await handler({ request: requestFor(), env: BASE_ENV })
-    const responsePayload = await response.json()
+    const response = await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, refresh: true }),
+      env: BASE_ENV,
+    })
+    const payload = await response.json()
 
     expect(response.status).toBe(200)
-    expect(response.headers.get("X-SMS-Cache")).toBe("miss")
-    expect(responsePayload).toEqual(ORIGIN_PAYLOAD)
+    expect(response.headers.get("X-SMS-Cache")).toBe("refreshed")
+    expect(payload).toMatchObject({
+      items: [MASKED_MESSAGE],
+      cacheStatus: "refreshed",
+      revealCode: false,
+      showSms: false,
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(store.writes).toHaveLength(1)
     expect(store.writes[0].key).toBe(createSmsCacheKey(REQUEST_PAYLOAD))
     expect(store.writes[0].options.cacheControl).toBe("max-age=20, stale-while-revalidate=20")
     expect(JSON.stringify(store.writes[0].value)).not.toContain("WhatsApp")
-    expect(JSON.stringify(store.writes[0].value)).not.toContain("verification code")
+    expect(JSON.stringify(store.writes[0].value)).not.toContain("438921")
   })
 
-  it("serves a fresh encrypted cache hit without calling the origin again", async () => {
+  it("serves all display variants from one Blob snapshot without another origin request", async () => {
     const store = new FakeStore()
-    const fetchImpl = originFetch()
+    const fetchImpl = messageOriginFetch()
     const handler = createSmsCacheHandler({
       fetchImpl,
       getStoreImpl: () => store,
       nowImpl: () => 2_000_000,
     })
 
-    const first = await handler({ request: requestFor(), env: BASE_ENV })
-    expect(first.headers.get("X-SMS-Cache")).toBe("miss")
+    await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, refresh: true }),
+      env: BASE_ENV,
+    })
+    const cached = await handler({ request: messageRequest(), env: BASE_ENV })
+    const revealed = await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, revealCode: true, showSms: true }),
+      env: BASE_ENV,
+    })
 
-    const second = await handler({ request: requestFor(), env: BASE_ENV })
-    expect(second.headers.get("X-SMS-Cache")).toBe("hit")
-    expect(await second.json()).toEqual(ORIGIN_PAYLOAD)
+    expect(cached.headers.get("X-SMS-Cache")).toBe("hit")
+    expect(revealed.headers.get("X-SMS-Cache")).toBe("hit")
+    expect((await revealed.json()).items).toEqual([FULL_MESSAGE])
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
-  it("refreshes an expired cache record", async () => {
+  it("returns an expired snapshot as stale without refreshing the backend", async () => {
     const store = new FakeStore()
-    const fetchImpl = originFetch()
+    const fetchImpl = messageOriginFetch()
     let now = 3_000_000
     const handler = createSmsCacheHandler({
       fetchImpl,
@@ -149,31 +234,59 @@ describe("EdgeOne SMS Blob cache", () => {
       nowImpl: () => now,
     })
 
-    await handler({ request: requestFor(), env: BASE_ENV })
+    await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, refresh: true }),
+      env: BASE_ENV,
+    })
     now += 21_000
-    const refreshed = await handler({ request: requestFor(), env: BASE_ENV })
+    const stale = await handler({ request: messageRequest(), env: BASE_ENV })
 
-    expect(refreshed.headers.get("X-SMS-Cache")).toBe("miss")
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
-    expect(store.writes).toHaveLength(2)
+    expect(stale.headers.get("X-SMS-Cache")).toBe("stale")
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(store.writes).toHaveLength(1)
   })
 
-  it("bypasses Blob safely when the encryption key is not configured", async () => {
-    const fetchImpl = originFetch()
+  it("never contacts the origin on a normal read when cache configuration is missing", async () => {
+    const fetchImpl = messageOriginFetch()
     const getStoreImpl = vi.fn(() => new FakeStore())
     const handler = createSmsCacheHandler({ fetchImpl, getStoreImpl })
     const env = { ...BASE_ENV, SMS_CACHE_ENCRYPTION_KEY: "" }
 
-    const response = await handler({ request: requestFor(), env })
+    const response = await handler({ request: messageRequest(), env })
+
+    expect(response.status).toBe(503)
+    expect((await response.json()).kind).toBe("configuration")
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(getStoreImpl).not.toHaveBeenCalled()
+  })
+
+  it("allows an explicit refresh to bypass unavailable Blob storage", async () => {
+    const fetchImpl = messageOriginFetch()
+    const logger = vi.fn()
+    const handler = createSmsCacheHandler({
+      fetchImpl,
+      getStoreImpl: () => {
+        throw Object.assign(new Error("unavailable"), { code: "BLOB_UNAVAILABLE" })
+      },
+      logger,
+    })
+
+    const response = await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, refresh: true }),
+      env: BASE_ENV,
+    })
 
     expect(response.status).toBe(200)
     expect(response.headers.get("X-SMS-Cache")).toBe("bypass")
     expect(fetchImpl).toHaveBeenCalledTimes(1)
-    expect(getStoreImpl).not.toHaveBeenCalled()
+    expect(logger).toHaveBeenCalledWith("Dashboard cache initialization failed", {
+      name: "Error",
+      code: "BLOB_UNAVAILABLE",
+    })
   })
 
-  it("falls back to the Python origin when Blob cannot be read", async () => {
-    const fetchImpl = originFetch()
+  it("does not fall through to the origin when a cache-only Blob read fails", async () => {
+    const fetchImpl = messageOriginFetch()
     const logger = vi.fn()
     const handler = createSmsCacheHandler({
       fetchImpl,
@@ -185,39 +298,68 @@ describe("EdgeOne SMS Blob cache", () => {
       logger,
     })
 
-    const response = await handler({ request: requestFor(), env: BASE_ENV })
+    const response = await handler({ request: messageRequest(), env: BASE_ENV })
 
-    expect(response.status).toBe(200)
-    expect(response.headers.get("X-SMS-Cache")).toBe("bypass")
-    expect(fetchImpl).toHaveBeenCalledTimes(1)
-    expect(logger).toHaveBeenCalledWith("SMS cache read failed", {
-      name: "Error",
-      code: "BLOB_UNAVAILABLE",
-    })
+    expect(response.status).toBe(503)
+    expect((await response.json()).kind).toBe("storage")
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
+})
 
-  it("treats a damaged cache envelope as a miss and replaces it", async () => {
+
+describe("EdgeOne orders Blob snapshot", () => {
+  it("returns an empty orders snapshot without contacting Python", async () => {
     const store = new FakeStore()
-    store.objects.set(createSmsCacheKey(REQUEST_PAYLOAD), {
-      version: 1,
-      algorithm: "A256GCM",
-      iv: "broken",
-      tag: "broken",
-      ciphertext: "broken",
-    })
-    const fetchImpl = originFetch()
-    const logger = vi.fn()
-    const handler = createSmsCacheHandler({
+    const fetchImpl = ordersOriginFetch()
+    const handler = createOrdersCacheHandler({
       fetchImpl,
       getStoreImpl: () => store,
-      logger,
+      nowImpl: () => 4_000_000,
     })
 
-    const response = await handler({ request: requestFor(), env: BASE_ENV })
+    const response = await handler({ request: ordersRequest(), env: BASE_ENV })
+    const payload = await response.json()
 
-    expect(response.headers.get("X-SMS-Cache")).toBe("miss")
+    expect(response.status).toBe(200)
+    expect(response.headers.get("X-SMS-Cache")).toBe("empty")
+    expect(payload).toMatchObject({ items: [], accountCount: 0, cacheStatus: "empty" })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it("refreshes orders explicitly and serves subsequent reads from Blob", async () => {
+    const store = new FakeStore()
+    const fetchImpl = ordersOriginFetch()
+    const handler = createOrdersCacheHandler({
+      fetchImpl,
+      getStoreImpl: () => store,
+      nowImpl: () => 5_000_000,
+    })
+
+    const refreshed = await handler({ request: ordersRequest(true), env: BASE_ENV })
+    const cached = await handler({ request: ordersRequest(), env: BASE_ENV })
+
+    expect(refreshed.headers.get("X-SMS-Cache")).toBe("refreshed")
+    expect(cached.headers.get("X-SMS-Cache")).toBe("hit")
+    expect((await cached.json()).items).toEqual(ORDERS_SNAPSHOT.items)
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(store.writes).toHaveLength(1)
-    expect(logger).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns stale orders without an automatic backend refresh", async () => {
+    const store = new FakeStore()
+    const fetchImpl = ordersOriginFetch()
+    let now = 6_000_000
+    const handler = createOrdersCacheHandler({
+      fetchImpl,
+      getStoreImpl: () => store,
+      nowImpl: () => now,
+    })
+
+    await handler({ request: ordersRequest(true), env: BASE_ENV })
+    now += 21_000
+    const stale = await handler({ request: ordersRequest(), env: BASE_ENV })
+
+    expect(stale.headers.get("X-SMS-Cache")).toBe("stale")
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 })

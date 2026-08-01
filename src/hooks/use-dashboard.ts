@@ -10,6 +10,7 @@ import {
 } from "@/lib/dashboard"
 import type {
   AccountWarning,
+  CacheStatus,
   DashboardStatus,
   HealthResponse,
   KitesimMessage,
@@ -17,6 +18,9 @@ import type {
 } from "@/types"
 
 const ACCESS_STORAGE_KEY = "kitesim.relay.accessKey"
+const AUTO_REFRESH_STORAGE_KEY = "kitesim.relay.autoRefreshSeconds"
+const AUTO_REFRESH_VALUES = new Set([0, 30, 60, 300])
+const CACHE_STATUSES = new Set<CacheStatus>(["hit", "stale", "empty", "refreshed", "bypass"])
 
 export type ConnectionMode = "idle" | "loading" | "ready" | "warning" | "error"
 
@@ -35,6 +39,27 @@ function storeAccessKey(value: string) {
   } catch {
     // Session storage is a convenience, not a requirement.
   }
+}
+
+function readStoredAutoRefreshSeconds(): number {
+  try {
+    const value = Number.parseInt(window.localStorage.getItem(AUTO_REFRESH_STORAGE_KEY) || "0", 10)
+    return AUTO_REFRESH_VALUES.has(value) ? value : 0
+  } catch {
+    return 0
+  }
+}
+
+function storeAutoRefreshSeconds(value: number) {
+  try {
+    window.localStorage.setItem(AUTO_REFRESH_STORAGE_KEY, String(value))
+  } catch {
+    // Local storage is a convenience, not a requirement.
+  }
+}
+
+function normalizeCacheStatus(value: unknown): CacheStatus {
+  return CACHE_STATUSES.has(value as CacheStatus) ? value as CacheStatus : "bypass"
 }
 
 function explainError(error: unknown): string {
@@ -65,6 +90,9 @@ export function useDashboard() {
   const [searchQuery, setSearchQuery] = useState("")
   const [loadingOrders, setLoadingOrders] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
+  const [ordersCacheStatus, setOrdersCacheStatus] = useState<CacheStatus | null>(null)
+  const [messageCacheStatus, setMessageCacheStatus] = useState<CacheStatus | null>(null)
+  const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(readStoredAutoRefreshSeconds)
   const [lastUpdatedAt, setLastUpdatedAt] = useState("")
   const [connection, setConnection] = useState<{ mode: ConnectionMode; text: string }>({
     mode: "loading",
@@ -116,6 +144,8 @@ export function useDashboard() {
     setLastUpdatedAt("")
     setLoadingOrders(false)
     setLoadingMessages(false)
+    setOrdersCacheStatus(null)
+    setMessageCacheStatus(null)
   }, [])
 
   const lock = useCallback(
@@ -151,46 +181,80 @@ export function useDashboard() {
         key?: string
         revealCode?: boolean
         showSms?: boolean
+        refresh?: boolean
         quiet?: boolean
         warningCount?: number
       } = {},
     ) => {
       const accessKey = options.key ?? accessKeyRef.current
-      if (!accessKey) return
+      if (!accessKey) return null
       const sequence = ++messageSequence.current
       const nextRevealCode = options.revealCode ?? revealCodeRef.current
       const nextShowSms = options.showSms ?? showSmsRef.current
       const warningCount = options.warningCount ?? warnings.length
+      const refresh = options.refresh === true
       setLoadingMessages(true)
-      setConnection({ mode: "loading", text: "正在同步短信" })
+      setConnection({
+        mode: "loading",
+        text: refresh ? "正在从 Kitesim 刷新短信" : "正在读取 Blob 短信",
+      })
 
       try {
         const payload = await getMessages(accessKey, order, {
           revealCode: nextRevealCode,
           showSms: nextShowSms,
+          refresh,
         })
-        if (sequence !== messageSequence.current) return
+        if (sequence !== messageSequence.current) return null
 
         if (!Array.isArray(payload.items)) {
           throw new ApiError("短信接口返回格式无效", 502, "server")
         }
         const items = payload.items
+        const cacheStatus = normalizeCacheStatus(payload.cacheStatus)
         setMessages(items)
+        setMessageCacheStatus(cacheStatus)
         setRevealCode(Boolean(payload.revealCode))
         revealCodeRef.current = Boolean(payload.revealCode)
         setShowSms(Boolean(payload.showSms))
         showSmsRef.current = Boolean(payload.showSms)
         setMessageCounts((current) => ({ ...current, [orderKey(order)]: items.length }))
-        setLastUpdatedAt(payload.updatedAt || "")
-        setConnection({
-          mode: warningCount ? "warning" : "ready",
-          text: warningCount ? "部分账户读取失败" : "安全通道已连接",
-        })
-        if (!options.quiet) toast.success(items.length ? "短信已刷新" : "这个号码暂时没有短信")
+        if (payload.updatedAt) setLastUpdatedAt(payload.updatedAt)
+
+        if (warningCount) {
+          setConnection({ mode: "warning", text: "部分账户读取失败" })
+        } else if (cacheStatus === "empty") {
+          setConnection({ mode: "ready", text: "Blob 暂无短信快照" })
+        } else if (cacheStatus === "stale") {
+          setConnection({ mode: "warning", text: "已读取旧短信快照" })
+        } else if (cacheStatus === "bypass") {
+          setConnection({ mode: "warning", text: "Blob 写入失败" })
+        } else if (cacheStatus === "refreshed") {
+          setConnection({ mode: "ready", text: "短信快照已更新" })
+        } else {
+          setConnection({ mode: "ready", text: "已读取 Blob 短信" })
+        }
+
+        if (!options.quiet) {
+          if (cacheStatus === "empty") {
+            toast.info("Blob 暂无短信快照，请点击刷新")
+          } else if (cacheStatus === "stale") {
+            toast.warning("已读取旧短信快照；点击刷新可获取最新数据")
+          } else if (cacheStatus === "bypass") {
+            toast.warning("已从 Kitesim 刷新，但 Blob 快照写入失败")
+          } else if (cacheStatus === "refreshed") {
+            toast.success(items.length ? "短信已刷新并写入 Blob" : "短信已刷新，当前暂无记录")
+          } else {
+            toast.success(items.length ? "已读取 Blob 短信快照" : "Blob 快照中暂无短信")
+          }
+        }
+        return cacheStatus
       } catch (error) {
-        if (sequence !== messageSequence.current) return
+        if (sequence !== messageSequence.current) return null
         setMessages([])
+        setMessageCacheStatus(null)
         handleRequestError(error, "短信")
+        return null
       } finally {
         if (sequence === messageSequence.current) setLoadingMessages(false)
       }
@@ -201,24 +265,30 @@ export function useDashboard() {
   const fetchOrders = useCallback(
     async (
       nextStatus: DashboardStatus,
-      options: { key?: string; quiet?: boolean; preserveSelection?: boolean } = {},
+      options: { key?: string; quiet?: boolean; preserveSelection?: boolean; refresh?: boolean } = {},
     ) => {
       const accessKey = options.key ?? accessKeyRef.current
       if (!accessKey) return false
       const sequence = ++orderSequence.current
+      const refresh = options.refresh === true
       messageSequence.current += 1
       setLoadingOrders(true)
       setMessages([])
+      setMessageCacheStatus(null)
       setRevealCode(false)
       revealCodeRef.current = false
       setShowSms(false)
       showSmsRef.current = false
-      setConnection({ mode: "loading", text: "正在同步号码" })
+      setConnection({
+        mode: "loading",
+        text: refresh ? "正在从 Kitesim 刷新号码" : "正在读取 Blob 号码",
+      })
 
       let orderToLoad: KitesimOrder | null = null
       let currentWarnings: AccountWarning[] = []
+      let ordersStatus: CacheStatus | null = null
       try {
-        const payload = await getOrders(accessKey, nextStatus)
+        const payload = await getOrders(accessKey, nextStatus, { refresh })
         if (sequence !== orderSequence.current) return false
 
         if (
@@ -233,6 +303,7 @@ export function useDashboard() {
         }
 
         const nextOrders = payload.items
+        ordersStatus = normalizeCacheStatus(payload.cacheStatus)
         currentWarnings = payload.warnings
         const previousKey = options.preserveSelection ? selectedKeyRef.current : ""
         orderToLoad = nextOrders.find((order) => orderKey(order) === previousKey) ?? nextOrders[0] ?? null
@@ -242,23 +313,34 @@ export function useDashboard() {
         setAccountCount(payload.accountCount)
         setFailedAccountCount(payload.failedAccountCount)
         setWarnings(currentWarnings)
+        setOrdersCacheStatus(ordersStatus)
         setSelectedKey(nextSelectedKey)
         selectedKeyRef.current = nextSelectedKey
-        setLastUpdatedAt(payload.updatedAt || "")
+        if (payload.updatedAt) setLastUpdatedAt(payload.updatedAt)
         setStatusCounts((current) => {
           if (nextStatus === "all") return { ...current, ...statusCountsFromOrders(nextOrders) }
           return { ...current, [nextStatus]: nextOrders.length }
         })
-        setConnection({
-          mode: currentWarnings.length ? "warning" : "ready",
-          text: currentWarnings.length ? "部分账户读取失败" : "号码已读取",
-        })
+        if (currentWarnings.length) {
+          setConnection({ mode: "warning", text: "部分账户读取失败" })
+        } else if (ordersStatus === "empty") {
+          setConnection({ mode: "ready", text: "Blob 暂无号码快照" })
+        } else if (ordersStatus === "stale") {
+          setConnection({ mode: "warning", text: "已读取旧号码快照" })
+        } else if (ordersStatus === "bypass") {
+          setConnection({ mode: "warning", text: "Blob 写入失败" })
+        } else if (ordersStatus === "refreshed") {
+          setConnection({ mode: "ready", text: "号码快照已更新" })
+        } else {
+          setConnection({ mode: "ready", text: "已读取 Blob 号码" })
+        }
       } catch (error) {
         if (sequence !== orderSequence.current) return false
         setOrders([])
         setAccountCount(0)
         setFailedAccountCount(0)
         setWarnings([])
+        setOrdersCacheStatus(null)
         setSelectedKey("")
         selectedKeyRef.current = ""
         handleRequestError(error, "号码")
@@ -268,20 +350,32 @@ export function useDashboard() {
       }
 
       if (sequence !== orderSequence.current) return false
+      let messagesStatus: CacheStatus | null = null
       if (orderToLoad) {
-        await fetchMessages(orderToLoad, {
+        messagesStatus = await fetchMessages(orderToLoad, {
           key: accessKey,
           revealCode: false,
           showSms: false,
+          refresh,
           quiet: true,
           warningCount: currentWarnings.length,
         })
       }
       if (!options.quiet && accessKeyRef.current) {
         if (currentWarnings.length) {
-          toast.warning(`号码已刷新，${currentWarnings.length} 个账户读取失败`)
+          toast.warning(`${refresh ? "刷新" : "读取"}完成，${currentWarnings.length} 个账户失败`)
+        } else if (ordersStatus === "empty") {
+          toast.info("Blob 暂无号码快照，请点击刷新")
+        } else if (ordersStatus === "stale" || messagesStatus === "stale") {
+          toast.warning("已读取旧 Blob 快照；点击刷新可获取最新数据")
+        } else if (ordersStatus === "bypass" || messagesStatus === "bypass") {
+          toast.warning("已从 Kitesim 刷新，但 Blob 快照写入失败")
+        } else if (ordersStatus === "refreshed") {
+          toast.success(orderToLoad ? "号码和短信已刷新并写入 Blob" : "号码已刷新并写入 Blob")
+        } else if (messagesStatus === "empty") {
+          toast.info("已读取号码快照；所选号码暂无短信快照")
         } else {
-          toast.success(orderToLoad ? "号码和短信已刷新" : "当前状态没有号码")
+          toast.success(orderToLoad ? "已读取 Blob 号码和短信快照" : "Blob 快照中当前状态没有号码")
         }
       }
       return true
@@ -306,8 +400,8 @@ export function useDashboard() {
         storeAccessKey(key)
         setAuthenticated(true)
         setAccessFeedback("")
-        setConnection({ mode: "loading", text: "正在同步号码" })
-        await fetchOrders(statusRef.current, { key, quiet: options.quiet })
+        setConnection({ mode: "loading", text: "正在读取 Blob 号码" })
+        await fetchOrders(statusRef.current, { key, quiet: options.quiet, refresh: false })
         return true
       } catch (error) {
         accessKeyRef.current = ""
@@ -360,7 +454,7 @@ export function useDashboard() {
       setStatus(nextStatus)
       selectedKeyRef.current = ""
       setSelectedKey("")
-      void fetchOrders(nextStatus)
+      void fetchOrders(nextStatus, { refresh: false })
     },
     [fetchOrders, loadingMessages, loadingOrders],
   )
@@ -373,34 +467,57 @@ export function useDashboard() {
       selectedKeyRef.current = nextKey
       setSelectedKey(nextKey)
       setMessages([])
+      setMessageCacheStatus(null)
       setRevealCode(false)
       revealCodeRef.current = false
       setShowSms(false)
       showSmsRef.current = false
-      void fetchMessages(order, { revealCode: false, showSms: false })
+      void fetchMessages(order, { revealCode: false, showSms: false, refresh: false })
     },
     [fetchMessages, loadingMessages, loadingOrders, orders],
   )
 
   const toggleRevealCode = useCallback(() => {
     if (!selectedOrder || loadingMessages) return
-    void fetchMessages(selectedOrder, { revealCode: !revealCodeRef.current })
+    void fetchMessages(selectedOrder, { revealCode: !revealCodeRef.current, refresh: false })
   }, [fetchMessages, loadingMessages, selectedOrder])
 
   const toggleShowSms = useCallback(
     (nextValue: boolean) => {
       if (selectedOrder && !loadingMessages) {
-        void fetchMessages(selectedOrder, { showSms: nextValue })
+        void fetchMessages(selectedOrder, { showSms: nextValue, refresh: false })
       }
     },
     [fetchMessages, loadingMessages, selectedOrder],
   )
 
-  const refresh = useCallback(() => {
-    if (!loadingOrders && !loadingMessages) {
-      void fetchOrders(statusRef.current, { preserveSelection: true })
-    }
+  const refresh = useCallback(async (options: { quiet?: boolean } = {}) => {
+    if (loadingOrders || loadingMessages) return false
+    return fetchOrders(statusRef.current, {
+      preserveSelection: true,
+      refresh: true,
+      quiet: options.quiet,
+    })
   }, [fetchOrders, loadingMessages, loadingOrders])
+
+  useEffect(() => {
+    if (!authenticated || autoRefreshSeconds <= 0) return
+    const intervalId = window.setInterval(() => {
+      void refresh({ quiet: true })
+    }, autoRefreshSeconds * 1000)
+    return () => window.clearInterval(intervalId)
+  }, [authenticated, autoRefreshSeconds, refresh])
+
+  const changeAutoRefreshSeconds = useCallback((value: number) => {
+    if (!AUTO_REFRESH_VALUES.has(value)) return
+    setAutoRefreshSeconds(value)
+    storeAutoRefreshSeconds(value)
+    if (value === 0) {
+      toast.success("定时刷新已关闭；页面将只读取 Blob 快照")
+    } else {
+      toast.success(`已设置每 ${value} 秒从 Kitesim 刷新并回写 Blob`)
+    }
+  }, [])
 
   const copyValue = useCallback(async (value: string, label: string) => {
     try {
@@ -439,6 +556,9 @@ export function useDashboard() {
     searchQuery,
     loadingOrders,
     loadingMessages,
+    ordersCacheStatus,
+    messageCacheStatus,
+    autoRefreshSeconds,
     lastUpdatedAt,
     connection,
     setPrivacyMasked,
@@ -446,6 +566,7 @@ export function useDashboard() {
     verifyAccess,
     lock,
     refresh,
+    changeAutoRefreshSeconds,
     changeStatus,
     selectOrder,
     toggleRevealCode,

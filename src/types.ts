@@ -1,5 +1,7 @@
 export type DashboardStatus = "0" | "1" | "2" | "3" | "4" | "all"
 
+export type CacheStatus = "hit" | "stale" | "empty" | "refreshed" | "bypass"
+
 export type AccountWarning = {
   accountId: string
   accountLabel: string
@@ -63,6 +65,7 @@ export type OrdersResponse = {
   warnings: AccountWarning[]
   status: DashboardStatus | number
   updatedAt: string
+  cacheStatus: CacheStatus
 }
 
 export type MessagesResponse = {
@@ -73,6 +76,7 @@ export type MessagesResponse = {
   revealCode: boolean
   showSms: boolean
   updatedAt: string
+  cacheStatus: CacheStatus
 }
 
 export type ApiFailure = {

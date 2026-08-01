@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="270" viewBox="0 0 1200 270" role="img" aria-labelledby="title desc">
+  <title id="title">Kitesim Relay 的四项核心能力</title>
+  <desc id="desc">跨 Token 聚合、只读 GET、服务端密钥和加密 Blob 快照。</desc>
+
+  <rect x="1" y="1" width="1198" height="268" rx="24" fill="#FFFFFF" stroke="#DCE0E6" stroke-width="2"/>
+  <line x1="300" y1="38" x2="300" y2="232" stroke="#E7EAF0" stroke-width="2"/>
+  <line x1="600" y1="38" x2="600" y2="232" stroke="#E7EAF0" stroke-width="2"/>
+  <line x1="900" y1="38" x2="900" y2="232" stroke="#E7EAF0" stroke-width="2"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+    <g transform="translate(54 42)">
+      <rect width="58" height="58" rx="16" fill="#EEF2FF"/>
+      <rect x="15" y="15" width="28" height="11" rx="4" fill="none" stroke="#4F46E5" stroke-width="3"/>
+      <rect x="15" y="32" width="28" height="11" rx="4" fill="none" stroke="#4F46E5" stroke-width="3"/>
+      <circle cx="36" cy="20.5" r="2.5" fill="#34D399"/>
+      <circle cx="36" cy="37.5" r="2.5" fill="#34D399"/>
+      <text x="0" y="112" fill="#10141B" font-size="30" font-weight="740">20 个账户</text>
+      <text x="0" y="147" fill="#667085" font-size="20">跨 Token 聚合</text>
+    </g>
+
+    <g transform="translate(354 42)">
+      <rect width="58" height="58" rx="16" fill="#ECFDF5"/>
+      <path d="M15 29H43M34 20l9 9-9 9" fill="none" stroke="#059669" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="0" y="112" fill="#10141B" font-size="30" font-weight="740">只读 GET</text>
+      <text x="0" y="147" fill="#667085" font-size="20">不创建或修改订单</text>
+    </g>
+
+    <g transform="translate(654 42)">
+      <rect width="58" height="58" rx="16" fill="#FFF7ED"/>
+      <circle cx="24" cy="29" r="9" fill="none" stroke="#EA580C" stroke-width="3"/>
+      <path d="M33 29H45M41 29v7M36 29v5" fill="none" stroke="#EA580C" stroke-width="3" stroke-linecap="round"/>
+      <text x="0" y="112" fill="#10141B" font-size="30" font-weight="740">服务端密钥</text>
+      <text x="0" y="147" fill="#667085" font-size="20">Token 不进入浏览器</text>
+    </g>
+
+    <g transform="translate(954 42)">
+      <rect width="58" height="58" rx="16" fill="#F5F3FF"/>
+      <path d="M16 23h26v22H16zM22 23v-5a7 7 0 0 1 14 0v5" fill="none" stroke="#7C3AED" stroke-width="3" stroke-linejoin="round"/>
+      <circle cx="29" cy="34" r="3" fill="#34D399"/>
+      <path d="M29 37v4" stroke="#34D399" stroke-width="3" stroke-linecap="round"/>
+      <text x="0" y="112" fill="#10141B" font-size="30" font-weight="740">加密快照</text>
+      <text x="0" y="147" fill="#667085" font-size="20">Blob + 默认遮罩</text>
+    </g>
+  </g>
+</svg>
