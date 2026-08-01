@@ -116,7 +116,11 @@ function AutoRefreshSelect({ dashboard }: { dashboard: DashboardController }) {
       onValueChange={(value) => dashboard.changeAutoRefreshSeconds(Number(value))}
       disabled={dashboard.loadingOrders || dashboard.loadingMessages}
     >
-      <SelectTrigger size="sm" className="hidden w-[108px] sm:flex" aria-label="定时刷新周期">
+      <SelectTrigger
+        size="sm"
+        className="hidden min-w-[124px] shrink-0 sm:flex"
+        aria-label="定时刷新周期"
+      >
         <TimerReset className="text-muted-foreground" />
         <SelectValue />
       </SelectTrigger>
@@ -152,7 +156,7 @@ function WorkspaceHeader({ dashboard }: { dashboard: DashboardController }) {
         </div>
       </div>
 
-      <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
         <Badge variant="outline" className={cn("hidden font-normal sm:inline-flex", connectionTone)}>
           <span
             className={cn(
@@ -358,7 +362,7 @@ function AccountRail({ dashboard }: { dashboard: DashboardController }) {
                     key={group.accountId}
                     variant="ghost"
                     className={cn(
-                      "h-auto w-full justify-start rounded-none px-3 py-3 text-left",
+                      "h-auto w-full justify-start rounded-none px-3 py-3 text-left md:h-auto",
                       selected && "bg-accent text-accent-foreground",
                     )}
                     onClick={() => dashboard.selectOrder(orderKey(firstOrder))}
