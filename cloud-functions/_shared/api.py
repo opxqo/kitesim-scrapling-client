@@ -296,6 +296,7 @@ def create_api_blueprint() -> Blueprint:
             return _handle_kitesim_error(exc)
 
     @api.post("/messages")
+    @api.post("/messages-origin")
     @_protected
     def messages() -> tuple[Response, int] | Response:
         payload = request.get_json(silent=True)

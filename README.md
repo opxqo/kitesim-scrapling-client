@@ -1,6 +1,6 @@
 # Kitesim Signal Desk
 
-一个使用 Scrapling 静态 `Fetcher` 聚合多个 Kitesim Token 账户、读取号码订单和短信验证码的私人网页控制台。面板采用 React、Vite、Tailwind CSS 与 shadcn/ui，支持本地 Flask 和 EdgeOne Makers Python Cloud Functions。
+一个使用 Scrapling 静态 `Fetcher` 聚合多个 Kitesim Token 账户、读取号码订单和短信验证码的私人网页控制台。面板采用 React、Vite、Tailwind CSS 与 shadcn/ui，支持本地 Flask，以及 EdgeOne Makers 的 Node.js Blob 缓存网关与 Python Cloud Functions。
 
 所有上游 Kitesim 请求均为 GET，不会发送验证码、创建订单、支付、退款或修改账户。
 
@@ -11,6 +11,11 @@ React + shadcn/ui 静态面板
   ├─ POST /api/session       验证控制台访问口令
   ├─ GET  /api/orders        读取号码订单
   └─ POST /api/messages      读取所选号码的短信
+              │
+              ▼
+EdgeOne Node.js Cloud Function
+  ├─ 命中：解密 Blob 缓存后返回
+  └─ 未命中：POST /api/messages-origin
               │
               ▼
 EdgeOne Python Cloud Function / 本地 Flask
@@ -29,6 +34,7 @@ dist/                              npm run build 生成的部署产物（不提�
 package.json                       前端依赖、构建、检查与测试命令
 components.json                   shadcn/ui 组件配置
 cloud-functions/api/index.py      EdgeOne Flask 入口（外部路由 /api）
+cloud-functions/api/messages.js   EdgeOne Node.js Blob 缓存入口（精确路由 /api/messages）
 cloud-functions/_shared/           本地与云端共用的 API 和 Scrapling 核心
 cloud-functions/requirements.txt  Python 3.10 函数依赖
 app.py                             本地 API 与 dist 生产包预览服务
@@ -45,6 +51,8 @@ edgeone.json                       Vite 构建、静态输出、安全头与函�
 - `KITESIM_TOKENS`：本地简写，支持 JSON 数组或逗号、分号、换行分隔，且不能超过 500 字节。
 - `KITESIM_TOKEN`：向后兼容的单账户配置；所有来源会合并并按 Token 去重。
 - `DASHBOARD_ACCESS_KEY`：你自己生成的控制台访问口令，至少 12 个字符。
+- `SMS_CACHE_ENCRYPTION_KEY`：Blob 短信缓存的 AES-256-GCM 密钥，必须是 32 字节 Base64；只放服务端环境变量。
+- `SMS_CACHE_TTL_SECONDS`：短信缓存有效时间，默认 20 秒，允许范围 5 到 300 秒。
 
 EdgeOne 当前将单个环境变量值限制为 500 字节，因此多账户应拆成编号变量，而不是把大量 Token 塞进一个值。具体限制以 [EdgeOne Makers Limits and Quotas](https://pages.edgeone.ai/document/limits-and-quotas) 为准。
 
@@ -92,6 +100,8 @@ export KITESIM_TOKEN_2='TOKEN_2'
 export KITESIM_TOKEN_NAME_2='备用号码'
 unset KITESIM_TOKENS KITESIM_TOKEN
 export DASHBOARD_ACCESS_KEY='你生成的控制台访问口令'
+export SMS_CACHE_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+export SMS_CACHE_TTL_SECONDS='20'
 ```
 
 开发模式使用两个终端：
@@ -106,6 +116,8 @@ npm run dev
 ```
 
 打开 <http://127.0.0.1:5173>。网页里输入的是 `DASHBOARD_ACCESS_KEY`，不是 `KITESIM_TOKEN`。
+
+普通 Vite + Flask 本地模式会直接调用 Python `/api/messages`，不连接 Blob。需要验证 Node 缓存路由、Blob 命名空间和 `X-SMS-Cache` 响应头时，请使用已关联 EdgeOne 项目的 `edgeone makers dev`。
 
 需要验证与 EdgeOne 静态产物一致的本地效果时：
 
@@ -144,6 +156,8 @@ edgeone makers env set KITESIM_TOKEN_2 "$KITESIM_TOKEN_2"
 edgeone makers env set KITESIM_TOKEN_NAME_2 "$KITESIM_TOKEN_NAME_2"
 edgeone makers env set DASHBOARD_ACCESS_KEY "$DASHBOARD_ACCESS_KEY"
 edgeone makers env set KITESIM_REQUEST_TIMEOUT "12"
+edgeone makers env set SMS_CACHE_ENCRYPTION_KEY "$SMS_CACHE_ENCRYPTION_KEY"
+edgeone makers env set SMS_CACHE_TTL_SECONDS "20"
 edgeone makers deploy -e preview
 ```
 
@@ -169,6 +183,8 @@ POST /api/session
 GET  /api/orders?status=2
 POST /api/messages
 ```
+
+在 Preview 连续请求同一个号码和同一组显示选项时，还应检查响应头：首次通常是 `X-SMS-Cache: miss`，有效期内再次请求应为 `X-SMS-Cache: hit`。未配置或无法使用 Blob 时会显示 `X-SMS-Cache: bypass`，请求仍会回退到 Python 原接口。
 
 `edgeone.json` 将 Python Cloud Function 最大执行时间设为 60 秒。Direct Upload 项目如果不应用该字段，请在 Makers 控制台的 Function 设置中配置相同值。
 
@@ -203,7 +219,9 @@ npm run build
 ## 已知边界
 
 - 控制台口令保存在浏览器当前标签页的 `sessionStorage`，关闭标签页后清除。
-- EdgeOne Functions 是无状态运行时，服务端不保存短信、验证码或会话记录。
+- EdgeOne 部署会把成功的短信响应变体加密后写入 Blob；缓存键只保存业务标识的 SHA-256 摘要，不保存 Kitesim Token、控制台口令或明文号码。
+- Blob 没有对象 TTL。`SMS_CACHE_TTL_SECONDS` 决定缓存是否可继续使用，过期内容会在该号码再次访问时被覆盖；长期不再访问的加密对象需要在 Blob 中手动清理。
+- 轮换 `SMS_CACHE_ENCRYPTION_KEY` 后旧缓存无法解密，会自动按未命中处理并在再次访问时覆盖。
 - 多 Token 查询最多接受 20 个去重后的账户；默认状态最多并发读取 8 个账户，每个账户只产生一次订单请求。
 - “全部状态”一次最多查询 8 个账户，并对每个账户产生 5 次读取；单次上游超时会自动压到 8 秒以内，以适配当前 60 秒函数时限。超过 8 个账户时请切换到单一状态筛选。
 - 多账户模式下，短信请求必须同时携带订单响应中的匿名 `accountId` 和签名 `messageHandle`；单账户旧客户端可继续省略这两个字段。

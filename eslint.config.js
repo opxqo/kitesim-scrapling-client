@@ -20,6 +20,13 @@ export default defineConfig([
     },
   },
   {
+    files: ["cloud-functions/**/*.js"],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
+  {
     files: ["src/components/ui/**/*.{ts,tsx}"],
     rules: {
       "react-refresh/only-export-components": "off",

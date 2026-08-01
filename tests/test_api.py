@@ -505,6 +505,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload["items"][0]["code"], ["438921"])
         self.assertIn("438921", payload["items"][0]["content"])
 
+    def test_messages_origin_alias_preserves_the_protected_python_endpoint(self) -> None:
+        response = self.client.post(
+            "/api/messages-origin",
+            headers={**AUTH_HEADERS, "Content-Type": "application/json"},
+            json={"orderId": 42, "phoneNumber": "+15551234567"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["items"][0]["code"], ["4****1"])
+        self.assertEqual(response.headers["Cache-Control"], "no-store, max-age=0")
+
     def test_messages_validates_input(self) -> None:
         response = self.client.post(
             "/api/messages",
