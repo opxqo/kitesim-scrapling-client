@@ -20,6 +20,7 @@ const MAX_REQUEST_BODY_BYTES = 8 * 1024
 const MESSAGE_ORIGIN_PATH = "/origin/messages-origin"
 const ORDERS_ORIGIN_PATH = "/origin/orders-origin"
 const PHONE_PATTERN = /^\+?\d{6,20}$/
+const SAFE_HOST_PATTERN = /^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|\[[0-9a-f:]+\])(?::\d{1,5})?$/i
 
 
 function environmentValue(context, name) {
@@ -125,6 +126,24 @@ function requestHeaders(request, contentType = false) {
   if (authorization) headers.set("Authorization", authorization)
   if (dashboardKey) headers.set("X-Dashboard-Key", dashboardKey)
   return headers
+}
+
+
+function publicRequestUrl(request) {
+  const url = new URL(request.url)
+  // EdgeOne builds request.url from its internal Host and exposes the public route separately.
+  const pagesHost = (request.headers.get("eo-pages-host") || "").split(",", 1)[0].trim()
+  if (!pagesHost || pagesHost.includes("..") || !SAFE_HOST_PATTERN.test(pagesHost)) return url
+
+  const forwardedProtocol = (request.headers.get("x-forwarded-proto") || "")
+    .split(",", 1)[0]
+    .trim()
+    .toLowerCase()
+  url.protocol = forwardedProtocol === "http" ? "http:" : "https:"
+  url.host = pagesHost
+  url.username = ""
+  url.password = ""
+  return url
 }
 
 
@@ -361,7 +380,10 @@ function emptyMessageResponse(payload) {
 
 
 async function fetchMessageSnapshot(request, payload, fetchImpl, cacheStatus) {
-  const originUrl = new URL(MESSAGE_ORIGIN_PATH, request.url)
+  const originUrl = publicRequestUrl(request)
+  originUrl.pathname = MESSAGE_ORIGIN_PATH
+  originUrl.search = ""
+  originUrl.hash = ""
   const originPayload = { ...payload, cacheSnapshot: true }
   delete originPayload.refresh
   return fetchJson(
@@ -508,7 +530,7 @@ function emptyOrdersResponse(query) {
 
 
 async function fetchOrdersSnapshot(request, fetchImpl, cacheStatus) {
-  const originUrl = new URL(request.url)
+  const originUrl = publicRequestUrl(request)
   originUrl.pathname = ORDERS_ORIGIN_PATH
   originUrl.searchParams.delete("refresh")
   return fetchJson(

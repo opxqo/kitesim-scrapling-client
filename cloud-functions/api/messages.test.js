@@ -199,6 +199,33 @@ describe("EdgeOne message Blob snapshot", () => {
     expect(JSON.stringify(store.writes[0].value)).not.toContain("438921")
   })
 
+  it("uses the public EdgeOne host when the runtime request URL points at an internal endpoint", async () => {
+    const store = new FakeStore()
+    const fetchImpl = vi.fn(async (url) => {
+      expect(String(url)).toBe("https://esim.opxqo.cn/origin/messages-origin")
+      return new Response(JSON.stringify(MESSAGE_SNAPSHOT), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    })
+    const handler = createSmsCacheHandler({ fetchImpl, getStoreImpl: () => store })
+    const request = new Request("https://internal.function.example/api/messages", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${ACCESS_KEY}`,
+        "Content-Type": "application/json",
+        "eo-pages-host": "esim.opxqo.cn",
+        "x-forwarded-proto": "https",
+      },
+      body: JSON.stringify({ ...REQUEST_PAYLOAD, refresh: true }),
+    })
+
+    const response = await handler({ request, env: BASE_ENV })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("X-SMS-Cache")).toBe("refreshed")
+  })
+
   it("serves all display variants from one Blob snapshot without another origin request", async () => {
     const store = new FakeStore()
     const fetchImpl = messageOriginFetch()
@@ -370,6 +397,33 @@ describe("EdgeOne orders Blob snapshot", () => {
     expect((await cached.json()).items).toEqual(ORDERS_SNAPSHOT.items)
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(store.writes).toHaveLength(1)
+  })
+
+  it("uses the public EdgeOne host for an orders refresh from an internal runtime URL", async () => {
+    const store = new FakeStore()
+    const fetchImpl = vi.fn(async (url) => {
+      expect(String(url)).toBe("https://esim.opxqo.cn/origin/orders-origin?status=2&limit=20")
+      return new Response(JSON.stringify(ORDERS_SNAPSHOT), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    })
+    const handler = createOrdersCacheHandler({ fetchImpl, getStoreImpl: () => store })
+    const request = new Request(
+      "https://internal.function.example/api/orders?status=2&limit=20&refresh=1",
+      {
+        headers: {
+          "Authorization": `Bearer ${ACCESS_KEY}`,
+          "eo-pages-host": "esim.opxqo.cn",
+          "x-forwarded-proto": "https",
+        },
+      },
+    )
+
+    const response = await handler({ request, env: BASE_ENV })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("X-SMS-Cache")).toBe("refreshed")
   })
 
   it("returns stale orders without an automatic backend refresh", async () => {
