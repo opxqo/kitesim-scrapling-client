@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "cloud-functions"))
 
 from _shared import kitesim as kitesim_module
-from _shared.kitesim import KitesimClient, build_messages, extract_codes, mask_code, mask_message
+from _shared.kitesim import KitesimClient, KitesimError, build_messages, extract_codes, mask_code, mask_message
 
 
 class KitesimCoreTests(unittest.TestCase):
@@ -53,6 +53,20 @@ class KitesimCoreTests(unittest.TestCase):
                 with self.subTest(dashboard_status=dashboard_status):
                     client.list_phone_orders(status=dashboard_status)
                     self.assertEqual(fetch.call_args.kwargs["params"]["status"], upstream_status)
+
+    def test_upstream_business_message_cannot_echo_secrets(self) -> None:
+        response = SimpleNamespace(
+            status=200,
+            reason="OK",
+            body=b'{"code":500,"message":"upstream echoed fake-secret-token"}',
+        )
+        client = KitesimClient("fake-token")
+
+        with patch.object(kitesim_module.Fetcher, "get", return_value=response):
+            with self.assertRaises(KitesimError) as raised:
+                client.list_phone_orders(status=2)
+
+        self.assertNotIn("fake-secret-token", str(raised.exception))
 
 
 if __name__ == "__main__":

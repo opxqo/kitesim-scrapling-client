@@ -202,14 +202,13 @@ class KitesimClient:
         if response.status in {401, 403}:
             raise KitesimAuthError("Kitesim AppToken 已失效或无权访问")
         if response.status != 200:
-            raise KitesimError(f"Kitesim HTTP {response.status}: {response.reason}")
+            raise KitesimError(f"Kitesim HTTP {response.status}")
 
         payload = _json_loads(response.body)
         if isinstance(payload, dict) and "code" in payload and payload.get("code") != 200:
-            message = str(payload.get("message") or f"Kitesim code={payload.get('code')}")
             if payload.get("code") in {401, 403}:
-                raise KitesimAuthError(message)
-            raise KitesimError(message)
+                raise KitesimAuthError("Kitesim AppToken 已失效或无权访问")
+            raise KitesimError(f"Kitesim 业务错误 code={payload.get('code')}")
         return payload.get("data") if isinstance(payload, dict) and "data" in payload else payload
 
     def list_phone_orders(

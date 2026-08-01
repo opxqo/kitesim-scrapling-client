@@ -1,7 +1,7 @@
 "use strict";
 
 const ACCESS_STORAGE_KEY = "kitesim.relay.accessKey";
-const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 58000;
 const STATUS_NAMES = {
   0: "待支付",
   1: "激活中",
@@ -15,6 +15,8 @@ const state = {
   authenticated: false,
   status: "2",
   orders: [],
+  accountCount: 0,
+  warnings: [],
   selectedKey: "",
   messages: [],
   revealCode: false,
@@ -41,6 +43,9 @@ const elements = {
   statusTabs: document.querySelector("#status-tabs"),
   numberSelect: document.querySelector("#number-select"),
   smsToggle: document.querySelector("#sms-toggle"),
+  accountNotice: document.querySelector("#account-notice"),
+  accountNoticeTitle: document.querySelector("#account-notice-title"),
+  accountNoticeDetail: document.querySelector("#account-notice-detail"),
   overviewGrid: document.querySelector("#overview-grid"),
   orderStatus: document.querySelector("#order-status"),
   phoneNumber: document.querySelector("#phone-number"),
@@ -49,6 +54,7 @@ const elements = {
   packageValue: document.querySelector("#package-value"),
   expiryValue: document.querySelector("#expiry-value"),
   renewValue: document.querySelector("#renew-value"),
+  accountValue: document.querySelector("#account-value"),
   codeSlots: document.querySelector("#code-slots"),
   codeNote: document.querySelector("#code-note"),
   privacyBadge: document.querySelector("#privacy-badge"),
@@ -140,7 +146,9 @@ async function apiRequest(path, options = {}) {
 }
 
 function orderKey(order) {
-  return String(order?.id ?? order?.orderNo ?? "");
+  const account = String(order?.accountId || "legacy");
+  const identifier = String(order?.id ?? order?.orderNo ?? "");
+  return `${account}:${identifier}`;
 }
 
 function selectedOrder() {
@@ -237,7 +245,8 @@ function renderNumberSelect() {
   for (const [index, order] of state.orders.entries()) {
     const option = document.createElement("option");
     option.value = orderKey(order);
-    option.textContent = `${order.phoneNumber || `号码 ${index + 1}`} · ${statusName(order)}`;
+    const account = order.accountLabel || "默认账户";
+    option.textContent = `${account} · ${order.phoneNumber || `号码 ${index + 1}`} · ${statusName(order)}`;
     elements.numberSelect.append(option);
   }
   elements.numberSelect.value = state.selectedKey;
@@ -250,7 +259,7 @@ function renderLineCard() {
   elements.orderStatus.classList.toggle("is-active", label === "使用中");
   elements.phoneNumber.textContent = order?.phoneNumber || "+ —";
   elements.lineCaption.textContent = order
-    ? `${state.orders.length} 个号码可用 · 当前资料只读`
+    ? `${order.accountLabel || "默认账户"} · ${state.accountCount || 1} 个 Token 账户 · 当前资料只读`
     : "同步后显示号码资料";
   elements.countryValue.textContent = order
     ? [order.countryCode, order.phoneCode].filter(Boolean).join(" / ") || "—"
@@ -258,6 +267,17 @@ function renderLineCard() {
   elements.packageValue.textContent = order?.packageId ?? "—";
   elements.expiryValue.textContent = order?.expireTime ? formatTime(order.expireTime) : "—";
   elements.renewValue.textContent = order ? (Number(order.autoRenew) === 1 ? "已开启" : "未开启") : "—";
+  elements.accountValue.textContent = order?.accountLabel || "—";
+}
+
+function renderAccountNotice() {
+  const warnings = Array.isArray(state.warnings) ? state.warnings : [];
+  elements.accountNotice.hidden = warnings.length === 0;
+  if (!warnings.length) return;
+
+  const labels = warnings.map((warning) => warning.accountLabel || "未命名账户");
+  elements.accountNoticeTitle.textContent = `${warnings.length} 个 Token 账户读取失败`;
+  elements.accountNoticeDetail.textContent = `${labels.join("、")}。其他账户已继续同步。`;
 }
 
 function renderCodeTicket() {
@@ -380,6 +400,7 @@ function renderAll() {
   renderStatusTabs();
   renderNumberSelect();
   renderLineCard();
+  renderAccountNotice();
   renderCodeTicket();
   renderMessages();
   renderControls();
@@ -387,6 +408,8 @@ function renderAll() {
 
 function resetWorkspaceData() {
   state.orders = [];
+  state.accountCount = 0;
+  state.warnings = [];
   state.selectedKey = "";
   state.messages = [];
   state.revealCode = false;
@@ -483,22 +506,31 @@ async function loadOrders({ quiet = false } = {}) {
   let shouldLoadMessages = false;
   let updatedAt = "";
   try {
-    const query = new URLSearchParams({ status: state.status, limit: "10" });
+    const query = new URLSearchParams({ status: state.status, limit: "20" });
     const payload = await apiRequest(`/api/orders?${query.toString()}`);
     if (sequence !== state.orderRequestSequence) return;
 
     state.orders = Array.isArray(payload.items) ? payload.items : [];
+    state.accountCount = Number(payload.accountCount) || (state.orders.length ? 1 : 0);
+    state.warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
     const previousSelectionExists = state.orders.some((order) => orderKey(order) === state.selectedKey);
     state.selectedKey = previousSelectionExists ? state.selectedKey : orderKey(state.orders[0]);
     updatedAt = payload.updatedAt || "";
     shouldLoadMessages = Boolean(selectedOrder());
-    setApiState("ready", state.orders.length ? "号码已读取" : "没有号码");
+    const partial = state.warnings.length > 0;
+    setConnection(
+      partial ? "warning" : shouldLoadMessages ? "loading" : "ready",
+      partial ? "部分账户读取失败" : shouldLoadMessages ? "正在同步短信" : "接口已连接",
+    );
+    setApiState(partial ? "warning" : "ready", partial ? "部分同步" : state.orders.length ? "号码已读取" : "没有号码");
     elements.syncLabel.textContent = state.orders.length
-      ? `${state.orders.length} 个号码 · ${formatTime(updatedAt)}`
-      : `当前状态没有号码 · ${formatTime(updatedAt)}`;
+      ? `${state.orders.length} 个号码 · ${state.accountCount} 个账户 · ${formatTime(updatedAt)}`
+      : `当前状态没有号码 · ${state.accountCount} 个账户 · ${formatTime(updatedAt)}`;
   } catch (error) {
     if (sequence !== state.orderRequestSequence) return;
     state.orders = [];
+    state.accountCount = 0;
+    state.warnings = [];
     state.selectedKey = "";
     state.messages = [];
     const message = explainError(error);
@@ -517,10 +549,15 @@ async function loadOrders({ quiet = false } = {}) {
   if (sequence !== state.orderRequestSequence) return;
   if (shouldLoadMessages) {
     await loadMessages({ quiet: true });
-    if (!quiet && state.authenticated) showToast("号码和短信已刷新", "success");
+    if (!quiet && state.authenticated) {
+      showToast(
+        state.warnings.length ? `号码已刷新，${state.warnings.length} 个账户读取失败` : "号码和短信已刷新",
+        state.warnings.length ? "error" : "success",
+      );
+    }
   } else if (!quiet && state.authenticated && !state.orders.length) {
-    setConnection("ready", "接口已连接");
-    showToast("接口已连接，当前状态没有号码");
+    setConnection(state.warnings.length ? "warning" : "ready", state.warnings.length ? "部分账户读取失败" : "接口已连接");
+    showToast(state.warnings.length ? "部分账户读取失败，其他账户当前没有号码" : "接口已连接，当前状态没有号码");
   }
 }
 
@@ -540,6 +577,8 @@ async function loadMessages({ quiet = false } = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        accountId: order.accountId,
+        messageHandle: order.messageHandle,
         orderId: order.id ?? order.orderNo,
         phoneNumber: order.phoneNumber,
         revealCode: state.revealCode,
@@ -552,8 +591,8 @@ async function loadMessages({ quiet = false } = {}) {
     state.revealCode = Boolean(payload.revealCode);
     state.showSms = Boolean(payload.showSms);
     elements.smsToggle.checked = state.showSms;
-    setConnection("ready", "安全通道已连接");
-    setApiState("ready", "同步完成");
+    setConnection(state.warnings.length ? "warning" : "ready", state.warnings.length ? "部分账户读取失败" : "安全通道已连接");
+    setApiState(state.warnings.length ? "warning" : "ready", state.warnings.length ? "部分同步" : "同步完成");
     elements.syncLabel.textContent = `${state.messages.length} 条短信 · ${formatTime(payload.updatedAt)}`;
     if (!quiet) showToast(state.messages.length ? "短信已刷新" : "这个号码暂时没有短信");
   } catch (error) {

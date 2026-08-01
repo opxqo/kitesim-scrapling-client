@@ -227,6 +227,12 @@ svg {
   box-shadow: 0 0 0 4px rgba(201, 63, 75, 0.14);
 }
 
+.connection-pill.is-warning i,
+.api-indicator.is-warning i {
+  background: var(--coral);
+  box-shadow: 0 0 0 4px rgba(255, 118, 82, 0.16);
+}
+
 .header-action {
   display: inline-flex;
   min-height: 38px;
@@ -785,6 +791,44 @@ svg {
   outline-offset: 2px;
 }
 
+.account-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 13px 16px;
+  border: 1px solid rgba(255, 118, 82, 0.28);
+  border-radius: 14px;
+  background: #fff5ef;
+  color: #8c3d28;
+}
+
+.account-notice svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.account-notice div {
+  display: grid;
+  gap: 3px;
+}
+
+.account-notice strong {
+  font-size: 12px;
+}
+
+.account-notice span {
+  color: #a45a45;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .overview-grid {
   display: grid;
   grid-template-columns: minmax(0, 0.88fr) minmax(520px, 1.12fr);
@@ -876,6 +920,10 @@ svg {
   padding: 16px;
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
+}
+
+.line-facts .is-wide {
+  grid-column: 1 / -1;
 }
 
 .line-facts dt {

@@ -111,7 +111,7 @@
             <div>
               <p class="micro-label">PERSONAL COMMUNICATION DESK</p>
               <h1 id="workspace-title">号码收件台</h1>
-              <p>选择一个号码，查看它的状态、最近短信和验证码。</p>
+              <p>集中查询多个 Token 账户，选择号码后查看状态、最近短信和验证码。</p>
             </div>
             <div class="sync-summary">
               <span class="sync-label" id="sync-label">尚未同步</span>
@@ -151,6 +151,14 @@
             </div>
           </section>
 
+          <div class="account-notice" id="account-notice" role="status" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.8 19h18.4L12 3ZM12 9v4M12 16.5h.01" /></svg>
+            <div>
+              <strong id="account-notice-title">部分 Token 账户读取失败</strong>
+              <span id="account-notice-detail"></span>
+            </div>
+          </div>
+
           <section class="overview-grid" aria-live="polite" aria-busy="false" id="overview-grid">
             <article class="line-card">
               <header class="card-heading">
@@ -180,6 +188,10 @@
                 <div>
                   <dt>自动续费</dt>
                   <dd id="renew-value">—</dd>
+                </div>
+                <div class="is-wide">
+                  <dt>Token 账户</dt>
+                  <dd id="account-value">—</dd>
                 </div>
               </dl>
             </article>

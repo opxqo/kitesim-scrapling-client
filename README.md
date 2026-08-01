@@ -1,6 +1,6 @@
 # Kitesim Signal Desk
 
-一个使用 Scrapling 静态 `Fetcher` 读取 Kitesim 号码订单和短信验证码的私人网页控制台，同时支持本地 Flask 和 EdgeOne Makers Python Cloud Functions。
+一个使用 Scrapling 静态 `Fetcher` 聚合多个 Kitesim Token 账户、读取号码订单和短信验证码的私人网页控制台，同时支持本地 Flask 和 EdgeOne Makers Python Cloud Functions。
 
 所有上游 Kitesim 请求均为 GET，不会发送验证码、创建订单、支付、退款或修改账户。
 
@@ -16,7 +16,7 @@
 EdgeOne Python Cloud Function / 本地 Flask
               │
               ▼
-Scrapling Fetcher → Kitesim 只读 GET API
+Scrapling Fetcher → 多个 Kitesim Token → Kitesim 只读 GET API
 ```
 
 项目结构：
@@ -34,10 +34,29 @@ edgeone.json                       安全响应头与函数超时
 
 ## 安全变量
 
-服务端需要两个不同的变量：
+服务端需要控制台口令，以及一个或多个 Kitesim Token：
 
-- `KITESIM_TOKEN`：Kitesim AppToken，只用于服务端访问 Kitesim。
+- `KITESIM_TOKEN_1` … `KITESIM_TOKEN_20`：EdgeOne 推荐的多账户配置，每个变量保存一个 Token。
+- `KITESIM_TOKEN_NAME_1` … `KITESIM_TOKEN_NAME_20`：对应的可选账户名称。
+- `KITESIM_TOKENS`：本地简写，支持 JSON 数组或逗号、分号、换行分隔，且不能超过 500 字节。
+- `KITESIM_TOKEN`：向后兼容的单账户配置；所有来源会合并并按 Token 去重。
 - `DASHBOARD_ACCESS_KEY`：你自己生成的控制台访问口令，至少 12 个字符。
+
+EdgeOne 当前将单个环境变量值限制为 500 字节，因此多账户应拆成编号变量，而不是把大量 Token 塞进一个值。具体限制以 [EdgeOne Makers Limits and Quotas](https://pages.edgeone.ai/document/limits-and-quotas) 为准。
+
+本地少量账户也可以把 `KITESIM_TOKENS` 配置成单行 JSON：
+
+```json
+[{"name":"主号码","token":"TOKEN_1"},{"name":"备用号码","token":"TOKEN_2"}]
+```
+
+也支持逗号、分号或换行分隔的简写，网页会自动显示为“账户 1”“账户 2”：
+
+```text
+TOKEN_1,TOKEN_2,TOKEN_3
+```
+
+Token 只用于服务端构造 Scrapling 客户端。浏览器只收到匿名 `accountId`、账户名称，以及把账户、订单、号码绑定在一起的 `messageHandle`。该句柄由对应 Token 在服务端签名，不能用于还原 Token，也不能换到另一个账户或号码。某个账户读取失败时，接口会继续返回其他健康账户，并在页面显示局部失败提醒。
 
 生成控制台访问口令：
 
@@ -62,7 +81,11 @@ python -m pip install -r requirements-web.txt
 设置变量并启动：
 
 ```bash
-export KITESIM_TOKEN='更新后的 Kitesim AppToken'
+export KITESIM_TOKEN_1='TOKEN_1'
+export KITESIM_TOKEN_NAME_1='主号码'
+export KITESIM_TOKEN_2='TOKEN_2'
+export KITESIM_TOKEN_NAME_2='备用号码'
+unset KITESIM_TOKENS KITESIM_TOKEN
 export DASHBOARD_ACCESS_KEY='你生成的控制台访问口令'
 python app.py
 ```
@@ -90,7 +113,10 @@ edgeone whoami
 
 ```bash
 edgeone makers link
-edgeone makers env set KITESIM_TOKEN "$KITESIM_TOKEN"
+edgeone makers env set KITESIM_TOKEN_1 "$KITESIM_TOKEN_1"
+edgeone makers env set KITESIM_TOKEN_NAME_1 "$KITESIM_TOKEN_NAME_1"
+edgeone makers env set KITESIM_TOKEN_2 "$KITESIM_TOKEN_2"
+edgeone makers env set KITESIM_TOKEN_NAME_2 "$KITESIM_TOKEN_NAME_2"
 edgeone makers env set DASHBOARD_ACCESS_KEY "$DASHBOARD_ACCESS_KEY"
 edgeone makers env set KITESIM_REQUEST_TIMEOUT "12"
 edgeone makers deploy -e preview
@@ -115,7 +141,7 @@ POST /api/messages
 
 ## 命令行使用
 
-命令行只需要 `KITESIM_TOKEN`：
+当前命令行客户端仍使用单个 `KITESIM_TOKEN`；多 Token 聚合由网页 API 提供：
 
 ```bash
 python kitesim_scrapling.py
@@ -140,7 +166,9 @@ python -m py_compile app.py kitesim_scrapling.py cloud-functions/api/index.py cl
 
 - 控制台口令保存在浏览器当前标签页的 `sessionStorage`，关闭标签页后清除。
 - EdgeOne Functions 是无状态运行时，服务端不保存短信、验证码或会话记录。
-- “全部状态”会触发 5 次订单列表读取，耗时高于单一状态；默认只读取“使用中”。
+- 多 Token 查询最多接受 20 个去重后的账户；默认状态最多并发读取 8 个账户，每个账户只产生一次订单请求。
+- “全部状态”一次最多查询 8 个账户，并对每个账户产生 5 次读取；单次上游超时会自动压到 8 秒以内，以适配当前 60 秒函数时限。超过 8 个账户时请切换到单一状态筛选。
+- 多账户模式下，短信请求必须同时携带订单响应中的匿名 `accountId` 和签名 `messageHandle`；单账户旧客户端可继续省略这两个字段。
 - Kitesim 列表接口的筛选码与订单返回的 `orderStatus` 不是同一套顺序；转换统一由 `ORDER_FILTER_TO_UPSTREAM_STATUS` 维护，不要直接删除该映射。
 - `Scrapling` 0.4.12 的静态 Fetcher 会导入 Playwright 类型，但不会启动浏览器。本项目提供仅限静态 Fetcher 的最小类型兼容层，从函数依赖中移除完整 Playwright 包；不要把它改成 `DynamicFetcher` 或 `StealthyFetcher`。
 - Preview 验证通过前不要发布到 Production，也不要绑定正式域名。
