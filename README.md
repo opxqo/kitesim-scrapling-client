@@ -1,13 +1,13 @@
 # Kitesim Signal Desk
 
-一个使用 Scrapling 静态 `Fetcher` 聚合多个 Kitesim Token 账户、读取号码订单和短信验证码的私人网页控制台，同时支持本地 Flask 和 EdgeOne Makers Python Cloud Functions。
+一个使用 Scrapling 静态 `Fetcher` 聚合多个 Kitesim Token 账户、读取号码订单和短信验证码的私人网页控制台。面板采用 React、Vite、Tailwind CSS 与 shadcn/ui，支持本地 Flask 和 EdgeOne Makers Python Cloud Functions。
 
 所有上游 Kitesim 请求均为 GET，不会发送验证码、创建订单、支付、退款或修改账户。
 
 ## 架构
 
 ```text
-浏览器静态页面
+React + shadcn/ui 静态面板
   ├─ POST /api/session       验证控制台访问口令
   ├─ GET  /api/orders        读取号码订单
   └─ POST /api/messages      读取所选号码的短信
@@ -22,14 +22,18 @@ Scrapling Fetcher → 多个 Kitesim Token → Kitesim 只读 GET API
 项目结构：
 
 ```text
-index.html                         EdgeOne 静态入口
-static/                            网页样式与交互
+index.html                         Vite HTML 入口
+src/                               React 面板、数据控制器与 shadcn/ui 组件
+public/                            Favicon 等原始静态资源
+dist/                              npm run build 生成的部署产物（不提交）
+package.json                       前端依赖、构建、检查与测试命令
+components.json                   shadcn/ui 组件配置
 cloud-functions/api/index.py      EdgeOne Flask 入口（外部路由 /api）
 cloud-functions/_shared/           本地与云端共用的 API 和 Scrapling 核心
 cloud-functions/requirements.txt  Python 3.10 函数依赖
-app.py                             本地 Flask 预览服务
+app.py                             本地 API 与 dist 生产包预览服务
 kitesim_scrapling.py              命令行客户端
-edgeone.json                       安全响应头与函数超时
+edgeone.json                       Vite 构建、静态输出、安全头与函数超时
 ```
 
 ## 安全变量
@@ -76,9 +80,10 @@ python3.10 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -r requirements-web.txt
+npm ci
 ```
 
-设置变量并启动：
+先设置服务端变量：
 
 ```bash
 export KITESIM_TOKEN_1='TOKEN_1'
@@ -87,10 +92,30 @@ export KITESIM_TOKEN_2='TOKEN_2'
 export KITESIM_TOKEN_NAME_2='备用号码'
 unset KITESIM_TOKENS KITESIM_TOKEN
 export DASHBOARD_ACCESS_KEY='你生成的控制台访问口令'
-python app.py
 ```
 
-打开 <http://127.0.0.1:8765>，网页里输入的是 `DASHBOARD_ACCESS_KEY`，不是 `KITESIM_TOKEN`。
+开发模式使用两个终端：
+
+```bash
+# 终端 1：API，Vite 会把 /api 代理到这里
+source .venv/bin/activate
+python app.py
+
+# 终端 2：React 热更新服务
+npm run dev
+```
+
+打开 <http://127.0.0.1:5173>。网页里输入的是 `DASHBOARD_ACCESS_KEY`，不是 `KITESIM_TOKEN`。
+
+需要验证与 EdgeOne 静态产物一致的本地效果时：
+
+```bash
+npm run build
+export KITESIM_WEB_PORT=8088
+.venv/bin/python app.py
+```
+
+打开 <http://127.0.0.1:8088>。
 
 使用 EdgeOne 本地运行时验证：
 
@@ -122,13 +147,23 @@ edgeone makers env set KITESIM_REQUEST_TIMEOUT "12"
 edgeone makers deploy -e preview
 ```
 
-如果使用 Git 集成项目，把仓库连接到 Makers，并在 Preview 环境设置同名变量；先部署非生产分支验证，再合并生产分支。
+如果使用 Git 集成项目，把仓库连接到 Makers，并在 Preview 环境设置同名变量；框架可选择 React/Vite，或使用下列显式设置：
+
+```text
+根目录      ./
+安装命令    npm ci
+构建命令    npm run build
+输出目录    dist
+Node.js     22.11.0
+```
+
+这些值已经写入 `edgeone.json`。先部署非生产分支验证，再合并生产分支。
 
 Preview 上线后至少检查：
 
 ```text
 GET  /
-GET  /static/styles.css
+GET  /assets/<构建后的 CSS 文件名>
 GET  /api/health
 POST /api/session
 GET  /api/orders?status=2
@@ -157,9 +192,12 @@ python kitesim_scrapling.py --json
 测试全部使用假 Token、假号码和假短信，不访问真实 Kitesim：
 
 ```bash
-python -m unittest discover -s tests -v
-node --check static/app.js
-python -m py_compile app.py kitesim_scrapling.py cloud-functions/api/index.py cloud-functions/_shared/*.py
+npm run typecheck
+npm run lint
+npm test
+npm run build
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m py_compile app.py kitesim_scrapling.py cloud-functions/api/index.py cloud-functions/_shared/*.py
 ```
 
 ## 已知边界

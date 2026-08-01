@@ -9,3 +9,6 @@ venv/
 !.env.example
 .edgeone/
 edgeone-dist/
+node_modules/
+dist/
+coverage/
