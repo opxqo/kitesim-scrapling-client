@@ -7,6 +7,14 @@
 </p>
 
 <p align="center">
+  <a href="https://edgeone.ai/pages/new?repository-url=https%3A%2F%2Fgithub.com%2Fopxqo%2Fkitesim-scrapling-client&project-name=kitesim-relay&root-directory=.%2F&install-command=npm%20ci&build-command=npm%20run%20build&output-directory=.%2Fdist&env=KITESIM_TOKEN_1%2CKITESIM_TOKEN_NAME_1%2CDASHBOARD_ACCESS_KEY%2CSMS_CACHE_ENCRYPTION_KEY%2CSMS_CACHE_TTL_SECONDS&env-description=Configure%20these%20server-side%20secrets%20before%20the%20first%20deployment">
+    <img src="https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg" alt="使用 EdgeOne Makers 部署">
+  </a>
+</p>
+
+<p align="center"><sub>快速部署会预填仓库与构建配置；首次上线前仍需在 EdgeOne 配置服务端变量</sub></p>
+
+<p align="center">
   <strong>把多个 Kitesim 账户的号码、短信与验证码，收进一张私有工作台。</strong><br>
   <sub>上游只使用 GET；不发送短信、不创建订单、不支付、不退款、不修改账户。</sub>
 </p>
