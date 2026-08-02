@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest"
 
 import { ApiError, getOrders, verifySession } from "@/lib/api"
-import type { OrdersResponse } from "@/types"
+import type { HealthResponse, OrdersResponse } from "@/types"
 
 import {
   accessVerificationFailure,
   normalizeCacheStatus,
   requestAccessOrders,
+  resolveDashboardBootstrap,
 } from "./use-dashboard"
 
 const ordersPayload: OrdersResponse = {
@@ -25,6 +26,23 @@ const sessionPayload = {
   ok: true,
   scope: "read-only",
   verifiedAt: "2026-08-02T00:00:00.000Z",
+}
+
+const healthPayload: HealthResponse = {
+  ok: true,
+  service: "kitesim-signal-desk",
+  runtime: "edgeone-node-cloud-function",
+  authConfigured: true,
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
 }
 
 describe("dashboard cache status normalization", () => {
@@ -143,5 +161,80 @@ describe("dashboard access orders request", () => {
       ok: false,
       failure: { clearAccessKey: true, accessInvalid: true },
     })
+  })
+})
+
+describe("dashboard bootstrap request ordering", () => {
+  it("starts health and stored-key verification together", async () => {
+    const health = deferred<HealthResponse>()
+    const verification = deferred<boolean>()
+    const requestHealth = vi.fn(() => health.promise)
+    const verifyStoredAccess = vi.fn(() => verification.promise)
+
+    const resultPromise = resolveDashboardBootstrap("dashboard-test-key", {
+      requestHealth,
+      verifyStoredAccess,
+    })
+
+    expect(requestHealth).toHaveBeenCalledOnce()
+    expect(verifyStoredAccess).toHaveBeenCalledOnce()
+    expect(verifyStoredAccess).toHaveBeenCalledWith("dashboard-test-key")
+
+    health.resolve(healthPayload)
+    verification.resolve(true)
+    await expect(resultPromise).resolves.toEqual({
+      mode: "authenticated",
+      health: healthPayload,
+    })
+  })
+
+  it("waits for health before becoming idle when no key is stored", async () => {
+    const health = deferred<HealthResponse>()
+    const requestHealth = vi.fn(() => health.promise)
+    const verifyStoredAccess = vi.fn<() => Promise<boolean>>()
+
+    const resultPromise = resolveDashboardBootstrap("", {
+      requestHealth,
+      verifyStoredAccess,
+    })
+
+    expect(requestHealth).toHaveBeenCalledOnce()
+    expect(verifyStoredAccess).not.toHaveBeenCalled()
+
+    health.resolve(healthPayload)
+    await expect(resultPromise).resolves.toEqual({ mode: "idle", health: healthPayload })
+  })
+
+  it("keeps the workspace authenticated when health fails after verification succeeds", async () => {
+    const healthError = new ApiError("服务健康检查失败", 503, "server")
+
+    const result = await resolveDashboardBootstrap("dashboard-test-key", {
+      requestHealth: vi.fn().mockRejectedValue(healthError),
+      verifyStoredAccess: vi.fn().mockResolvedValue(true),
+    })
+
+    expect(result).toEqual({ mode: "authenticated", health: null })
+  })
+
+  it("preserves the health error when health and stored-key verification both fail", async () => {
+    const healthError = new ApiError("服务健康检查失败", 503, "server")
+
+    const result = await resolveDashboardBootstrap("dashboard-test-key", {
+      requestHealth: vi.fn().mockRejectedValue(healthError),
+      verifyStoredAccess: vi.fn().mockResolvedValue(false),
+    })
+
+    expect(result).toEqual({ mode: "health-error", error: healthError })
+  })
+
+  it("preserves missing-auth configuration when health and verification both fail", async () => {
+    const health = { ...healthPayload, authConfigured: false }
+
+    const result = await resolveDashboardBootstrap("dashboard-test-key", {
+      requestHealth: vi.fn().mockResolvedValue(health),
+      verifyStoredAccess: vi.fn().mockResolvedValue(false),
+    })
+
+    expect(result).toEqual({ mode: "configuration-error", health })
   })
 })

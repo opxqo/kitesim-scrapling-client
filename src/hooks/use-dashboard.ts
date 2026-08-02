@@ -138,6 +138,67 @@ export async function requestAccessOrders(
   }
 }
 
+type DashboardBootstrapResult =
+  | { mode: "authenticated"; health: HealthResponse | null }
+  | { mode: "idle"; health: HealthResponse }
+  | { mode: "verification-failed"; health: HealthResponse; error?: unknown }
+  | { mode: "configuration-error"; health: HealthResponse }
+  | { mode: "health-error"; error: unknown }
+
+type DashboardBootstrapOperations = {
+  requestHealth: () => Promise<HealthResponse>
+  verifyStoredAccess: (accessKey: string) => Promise<boolean>
+}
+
+function healthResponseError(): ApiError {
+  return new ApiError("服务健康检查失败", 503, "server")
+}
+
+export async function resolveDashboardBootstrap(
+  storedKey: string,
+  operations: DashboardBootstrapOperations,
+): Promise<DashboardBootstrapResult> {
+  if (!storedKey) {
+    try {
+      const health = await operations.requestHealth()
+      if (!health.ok) return { mode: "health-error", error: healthResponseError() }
+      if (!health.authConfigured) return { mode: "configuration-error", health }
+      return { mode: "idle", health }
+    } catch (error) {
+      return { mode: "health-error", error }
+    }
+  }
+
+  const healthPromise = operations.requestHealth()
+  const verificationPromise = operations.verifyStoredAccess(storedKey)
+  const [healthResult, verificationResult] = await Promise.allSettled([
+    healthPromise,
+    verificationPromise,
+  ])
+
+  const authenticated = verificationResult.status === "fulfilled" && verificationResult.value
+  if (authenticated) {
+    const health = healthResult.status === "fulfilled"
+      && healthResult.value.ok
+      && healthResult.value.authConfigured
+      ? healthResult.value
+      : null
+    return { mode: "authenticated", health }
+  }
+
+  if (healthResult.status === "rejected") {
+    return { mode: "health-error", error: healthResult.reason }
+  }
+
+  const health = healthResult.value
+  if (!health.ok) return { mode: "health-error", error: healthResponseError() }
+  if (!health.authConfigured) return { mode: "configuration-error", health }
+  if (verificationResult.status === "rejected") {
+    return { mode: "verification-failed", health, error: verificationResult.reason }
+  }
+  return { mode: "verification-failed", health }
+}
+
 export function useDashboard() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [healthError, setHealthError] = useState("")
@@ -547,29 +608,52 @@ export function useDashboard() {
     bootstrapped.current = true
 
     void (async () => {
-      try {
-        const payload = await getHealth()
-        setHealth(payload)
-        if (!payload.ok) throw new ApiError("服务健康检查失败", 503, "server")
-        if (!payload.authConfigured) {
-          setAccessFeedback("服务端没有配置 DASHBOARD_ACCESS_KEY，暂时无法解锁。")
-          setAccessInvalid(true)
-          setConnection({ mode: "error", text: "缺少服务端配置" })
-          return
-        }
+      const storedKey = readStoredAccessKey()
+      const result = await resolveDashboardBootstrap(storedKey, {
+        requestHealth: getHealth,
+        verifyStoredAccess: (key) => verifyAccess(key, { quiet: true }),
+      })
 
-        const storedKey = readStoredAccessKey()
-        if (storedKey) {
-          await verifyAccess(storedKey, { quiet: true })
-        } else {
-          setConnection({ mode: "idle", text: "等待访问口令" })
-        }
-      } catch (error) {
-        const message = explainError(error)
+      if (result.mode === "authenticated") {
+        if (result.health) setHealth(result.health)
+        return
+      }
+
+      if (result.mode === "health-error") {
+        const message = explainError(result.error)
         setHealthError(message)
         setAccessFeedback(message)
         setAccessInvalid(true)
         setConnection({ mode: "error", text: "服务不可用" })
+        return
+      }
+
+      setHealth(result.health)
+      if (result.mode === "configuration-error") {
+        setAccessFeedback("服务端没有配置 DASHBOARD_ACCESS_KEY，暂时无法解锁。")
+        setAccessInvalid(true)
+        setConnection({ mode: "error", text: "缺少服务端配置" })
+        return
+      }
+
+      if (result.mode === "idle") {
+        setConnection({ mode: "idle", text: "等待访问口令" })
+        return
+      }
+
+      if (result.error !== undefined) {
+        const failure = accessVerificationFailure(result.error)
+        if (failure.clearAccessKey) {
+          accessKeyRef.current = ""
+          storeAccessKey("")
+        } else {
+          accessKeyRef.current = storedKey
+          storeAccessKey(storedKey)
+        }
+        setAuthenticated(false)
+        setAccessFeedback(failure.feedback)
+        setAccessInvalid(failure.accessInvalid)
+        setConnection(failure.connection)
       }
     })()
   }, [verifyAccess])
