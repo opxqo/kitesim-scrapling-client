@@ -113,18 +113,20 @@ export function AccessGate({ dashboard }: { dashboard: DashboardController }) {
                     value={accessKey}
                     onChange={(event) => setAccessKey(event.target.value)}
                     placeholder="至少 12 个字符"
-                    className="h-11 pr-12 pl-10 md:h-10"
-                    aria-invalid={dashboard.accessInvalid || unavailable}
+                    className="h-11 pr-12 pl-10 md:h-10 md:pr-12 md:pl-10"
+                    aria-invalid={dashboard.accessInvalid}
                     aria-describedby="access-feedback"
                   />
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    className="absolute top-1/2 right-0 -translate-y-1/2 md:right-2"
+                    className="absolute top-1/2 right-0 -translate-y-1/2 md:right-2 md:size-9"
                     onClick={() => setVisible((current) => !current)}
                     disabled={dashboard.authenticating || unavailable}
                     aria-label={visible ? "隐藏访问口令" : "显示访问口令"}
+                    aria-pressed={visible}
+                    aria-controls="dashboard-access-key"
                   >
                     {visible ? <EyeOff /> : <Eye />}
                   </Button>

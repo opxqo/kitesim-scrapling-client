@@ -25,6 +25,13 @@ const CACHE_STATUSES = new Set<CacheStatus>(["hit", "stale", "empty", "refreshed
 
 export type ConnectionMode = "idle" | "loading" | "ready" | "warning" | "error"
 
+type AccessVerificationFailure = {
+  clearAccessKey: boolean
+  feedback: string
+  accessInvalid: boolean
+  connection: { mode: ConnectionMode; text: string }
+}
+
 function readStoredAccessKey(): string {
   try {
     return window.sessionStorage.getItem(ACCESS_STORAGE_KEY) || ""
@@ -68,6 +75,25 @@ function explainError(error: unknown): string {
   if (error.kind === "dashboard_auth") return "访问口令已失效，请重新输入"
   if (error.kind === "upstream_auth") return "Kitesim Token 已失效，请更新服务端环境变量"
   return error.message || "读取失败，请稍后再试"
+}
+
+export function accessVerificationFailure(error: unknown): AccessVerificationFailure {
+  if (error instanceof ApiError && error.kind === "dashboard_auth") {
+    return {
+      clearAccessKey: true,
+      feedback: explainError(error),
+      accessInvalid: true,
+      connection: { mode: "idle", text: "等待访问口令" },
+    }
+  }
+
+  const message = explainError(error).replace(/[。.!！?？]+$/u, "")
+  return {
+    clearAccessKey: false,
+    feedback: `${message}；当前标签页口令已保留，可重试。`,
+    accessInvalid: false,
+    connection: { mode: "error", text: "验证失败，可重试" },
+  }
 }
 
 export function useDashboard() {
@@ -435,12 +461,18 @@ export function useDashboard() {
         await fetchOrders(statusRef.current, { key, quiet: options.quiet, refresh: false })
         return true
       } catch (error) {
-        accessKeyRef.current = ""
-        storeAccessKey("")
+        const failure = accessVerificationFailure(error)
+        if (failure.clearAccessKey) {
+          accessKeyRef.current = ""
+          storeAccessKey("")
+        } else {
+          accessKeyRef.current = key
+          storeAccessKey(key)
+        }
         setAuthenticated(false)
-        setAccessFeedback(explainError(error))
-        setAccessInvalid(true)
-        setConnection({ mode: "idle", text: "等待访问口令" })
+        setAccessFeedback(failure.feedback)
+        setAccessInvalid(failure.accessInvalid)
+        setConnection(failure.connection)
         return false
       } finally {
         setAuthenticating(false)
