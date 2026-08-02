@@ -502,7 +502,7 @@ function NumberTable({ dashboard }: { dashboard: DashboardController }) {
           <div className="relative hidden lg:block">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
-              className="h-7 w-44 pl-8 text-xs"
+              className="h-7 w-44 pl-8 text-xs md:h-7 md:pl-8 md:text-xs"
               placeholder="搜索号码或账户"
               value={dashboard.searchQuery}
               onChange={(event) => dashboard.setSearchQuery(event.target.value)}
@@ -515,7 +515,7 @@ function NumberTable({ dashboard }: { dashboard: DashboardController }) {
         <div className="relative mb-2 lg:hidden">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            className="pl-10"
+            className="pl-10 md:pl-10"
             placeholder="搜索号码或账户"
             value={dashboard.searchQuery}
             onChange={(event) => dashboard.setSearchQuery(event.target.value)}
