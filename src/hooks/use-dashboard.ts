@@ -16,6 +16,7 @@ import type {
   HealthResponse,
   KitesimMessage,
   KitesimOrder,
+  OrdersResponse,
 } from "@/types"
 
 const ACCESS_STORAGE_KEY = "kitesim.relay.accessKey"
@@ -70,6 +71,15 @@ export function normalizeCacheStatus(value: unknown): CacheStatus | null {
   return CACHE_STATUSES.has(value as CacheStatus) ? value as CacheStatus : null
 }
 
+function validOrdersPayload(payload: OrdersResponse): boolean {
+  return Array.isArray(payload.items)
+    && Array.isArray(payload.warnings)
+    && Number.isInteger(payload.accountCount)
+    && payload.accountCount >= 0
+    && Number.isInteger(payload.failedAccountCount)
+    && payload.failedAccountCount >= 0
+}
+
 function explainError(error: unknown): string {
   if (!(error instanceof ApiError)) return "读取失败，请稍后再试"
   if (error.kind === "dashboard_auth") return "访问口令已失效，请重新输入"
@@ -93,6 +103,38 @@ export function accessVerificationFailure(error: unknown): AccessVerificationFai
     feedback: `${message}；当前标签页口令已保留，可重试。`,
     accessInvalid: false,
     connection: { mode: "error", text: "验证失败，可重试" },
+  }
+}
+
+type AccessOrdersResult =
+  | { ok: true; payload: OrdersResponse }
+  | { ok: true; payload: null; ordersError: unknown }
+  | { ok: false; failure: AccessVerificationFailure }
+
+export async function requestAccessOrders(
+  accessKey: string,
+  status: DashboardStatus,
+  requestOrders: typeof getOrders = getOrders,
+  requestSession: typeof verifySession = verifySession,
+): Promise<AccessOrdersResult> {
+  try {
+    const payload = await requestOrders(accessKey, status, { refresh: false })
+    if (!validOrdersPayload(payload)) {
+      throw new ApiError("号码接口返回格式无效", 502, "server")
+    }
+    return { ok: true, payload }
+  } catch (error) {
+    const failure = accessVerificationFailure(error)
+    if (error instanceof ApiError && (error.kind === "dashboard_auth" || error.status === 401)) {
+      return { ok: false, failure }
+    }
+
+    try {
+      await requestSession(accessKey)
+      return { ok: true, payload: null, ordersError: error }
+    } catch (sessionError) {
+      return { ok: false, failure: accessVerificationFailure(sessionError) }
+    }
   }
 }
 
@@ -315,7 +357,13 @@ export function useDashboard() {
   const fetchOrders = useCallback(
     async (
       nextStatus: DashboardStatus,
-      options: { key?: string; quiet?: boolean; preserveSelection?: boolean; refresh?: boolean } = {},
+      options: {
+        key?: string
+        quiet?: boolean
+        preserveSelection?: boolean
+        refresh?: boolean
+        initialPayload?: OrdersResponse
+      } = {},
     ) => {
       const accessKey = options.key ?? accessKeyRef.current
       if (!accessKey) return false
@@ -339,17 +387,11 @@ export function useDashboard() {
       let currentWarnings: AccountWarning[] = []
       let ordersStatus: CacheStatus | null = null
       try {
-        const payload = await getOrders(accessKey, nextStatus, { refresh })
+        let payload = options.initialPayload
+        if (!payload) payload = await getOrders(accessKey, nextStatus, { refresh })
         if (sequence !== orderSequence.current) return false
 
-        if (
-          !Array.isArray(payload.items)
-          || !Array.isArray(payload.warnings)
-          || !Number.isInteger(payload.accountCount)
-          || payload.accountCount < 0
-          || !Number.isInteger(payload.failedAccountCount)
-          || payload.failedAccountCount < 0
-        ) {
+        if (!validOrdersPayload(payload)) {
           throw new ApiError("号码接口返回格式无效", 502, "server")
         }
 
@@ -451,34 +493,53 @@ export function useDashboard() {
       setAccessFeedback("正在验证访问口令…")
       setConnection({ mode: "loading", text: "正在建立安全通道" })
       try {
-        await verifySession(key)
+        const result = await requestAccessOrders(key, statusRef.current)
+        if (!result.ok) {
+          const { failure } = result
+          if (failure.clearAccessKey) {
+            accessKeyRef.current = ""
+            storeAccessKey("")
+          } else {
+            accessKeyRef.current = key
+            storeAccessKey(key)
+          }
+          setAuthenticated(false)
+          setAccessFeedback(failure.feedback)
+          setAccessInvalid(failure.accessInvalid)
+          setConnection(failure.connection)
+          return false
+        }
+
         accessKeyRef.current = key
         storeAccessKey(key)
         setAuthenticated(true)
         setAccessInvalid(false)
         setAccessFeedback("")
-        setConnection({ mode: "loading", text: "正在读取 Blob 号码" })
-        await fetchOrders(statusRef.current, { key, quiet: options.quiet, refresh: false })
-        return true
-      } catch (error) {
-        const failure = accessVerificationFailure(error)
-        if (failure.clearAccessKey) {
-          accessKeyRef.current = ""
-          storeAccessKey("")
-        } else {
-          accessKeyRef.current = key
-          storeAccessKey(key)
+        if (!result.payload) {
+          handleRequestError(result.ordersError, "号码")
+          return true
         }
-        setAuthenticated(false)
-        setAccessFeedback(failure.feedback)
-        setAccessInvalid(failure.accessInvalid)
-        setConnection(failure.connection)
-        return false
+
+        setConnection({ mode: "loading", text: "正在读取 Blob 号码" })
+        const loaded = await fetchOrders(statusRef.current, {
+          key,
+          quiet: options.quiet,
+          refresh: false,
+          initialPayload: result.payload,
+        })
+        if (!loaded) {
+          setAuthenticated(false)
+          if (accessKeyRef.current) {
+            setAccessFeedback("号码读取失败；当前标签页口令已保留，可重试。")
+            setAccessInvalid(false)
+          }
+        }
+        return loaded
       } finally {
         setAuthenticating(false)
       }
     },
-    [fetchOrders],
+    [fetchOrders, handleRequestError],
   )
 
   useEffect(() => {

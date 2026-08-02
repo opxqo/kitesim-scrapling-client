@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Kitesim Relay：将多个账户的号码、短信与验证码汇聚为一条受保护的只读信号链">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Kitesim Relay：将多个账户的号码、短信与验证码汇聚为一条由服务端 Token 与版本化 JSON Blob 支撑的只读信号链">
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@ Kitesim Relay 面向需要集中管理多个 Kitesim Token 的个人与小团队
 ## 核心能力
 
 <p align="center">
-  <img src="./assets/readme/capabilities.svg" width="100%" alt="Kitesim Relay 运行契约：最多二十个账户、上游只读 GET、Token 仅保存在服务端、普通读取优先使用 EdgeOne Blob 快照">
+  <img src="./assets/readme/capabilities.svg" width="100%" alt="Kitesim Relay 运行契约：最多二十个账户、上游只读 GET、Token 仅保存在服务端、普通读取优先使用版本化明文 JSON Blob 快照">
 </p>
 
 项目的边界故意保持很窄：只聚合读取，不提供创建订单、发送短信、支付、退款或账户修改能力。单个账户失败时，其余账户仍可继续返回。
@@ -35,13 +35,15 @@ Kitesim Relay 面向需要集中管理多个 Kitesim Token 的个人与小团队
 ## 架构
 
 <p align="center">
-  <img src="./assets/readme/architecture.svg" width="100%" alt="Kitesim Relay 双路径架构：普通读取只访问 EdgeOne Blob，显式刷新才经过 Python、Scrapling 与 Kitesim GET API">
+  <img src="./assets/readme/architecture.svg" width="100%" alt="Kitesim Relay 双路径架构：普通读取只访问版本化明文 JSON Blob，显式刷新才经过 Python、Scrapling 与 Kitesim GET API 并回写新快照">
 </p>
 
-- **普通读取**：浏览器 → EdgeOne Node API → Blob 快照。`hit`、`stale`、`empty` 都不会自动访问 Kitesim。
-- **显式刷新**：手动刷新或用户主动开启的定时刷新 → Python Origin → Scrapling `Fetcher.get` → Kitesim → 回写 Blob。
+- **普通读取**：浏览器 → EdgeOne Node API → 版本化明文 JSON Blob 快照。`hit`、`stale`、`empty` 都不会自动访问 Kitesim。
+- **显式刷新**：手动刷新或用户主动开启的定时刷新 → Python Origin → Scrapling `Fetcher.get` → Kitesim → 回写明文 JSON Blob。如果当前对象是旧版 AES 快照，本次刷新会将它覆盖迁移为新格式。
+- **热路径**：暖实例复用 Blob Store，并在最多 64 条记录的 5 秒 L1 中复用刚读取或写入的快照；同一 key 的并发读取共享一次 Blob I/O。
 
 浏览器只接收匿名 `accountId`、账户名称与服务端签名的 `messageHandle`；Kitesim Token 始终留在服务端。
+新写入不再做应用层 AES 加密；Blob 中保存的是带 `version`、`cachedAt`、`expiresAt` 和 `payload` 的 JSON 记录。
 
 ## 快速开始
 
@@ -86,9 +88,11 @@ npm run dev
 | `KITESIM_TOKEN_1` | 必填 | 第一个 Kitesim 账户 Token |
 | `KITESIM_TOKEN_NAME_1` | 可选 | 账户显示名称 |
 | `DASHBOARD_ACCESS_KEY` | 必填 | 控制台口令，至少 12 个字符 |
+| `SMS_CACHE_ENCRYPTION_KEY` | 迁移旧快照时可选 | 仅用于读取旧版 AES-256-GCM Blob；手动刷新后覆盖为明文 JSON |
 | `SMS_CACHE_TTL_SECONDS` | 可选 | 快照新鲜度，默认 20 秒，范围 5–300 秒 |
 
 多账户继续添加 `KITESIM_TOKEN_2` … `KITESIM_TOKEN_20`，并按需添加对应的 `KITESIM_TOKEN_NAME_2` … `KITESIM_TOKEN_NAME_20`。
+全新部署应将 `SMS_CACHE_ENCRYPTION_KEY` 留空；只有从加密快照版本升级且仍需读取旧数据时，才继续保留当时的原密钥。
 
 <details>
 <summary><strong>使用 EdgeOne CLI 部署与验证</strong></summary>
@@ -120,9 +124,10 @@ Preview 至少检查首页、构建后的静态资源、`/api/health`、`/api/se
 - **默认遮罩**：验证码与短信中的长数字默认隐藏，完整内容必须由用户显式请求。
 - **私有会话**：控制台口令只保存在当前标签页的 `sessionStorage`，关闭标签页后清除。
 - **Blob 优先**：普通读取只访问快照；过期或缺失都不会静默回源。
+- **明文快照**：新快照是版本化 JSON，项目不再对 Blob 内容做应用层加密；保密性依赖 EdgeOne 项目与 Blob 访问边界。
 
 > [!IMPORTANT]
-> 不要把真实 Token 或控制台口令写入代码、README、日志与截图。任何已经暴露的 Token 都应立即在 Kitesim 侧刷新。Blob 快照包含敏感数据，必须限制项目与存储访问权限。
+> 不要把真实 Token 或控制台口令写入代码、README、日志与截图。任何已经暴露的 Token 都应立即在 Kitesim 侧刷新。Blob 快照包含号码、短信和验证码等明文敏感数据，必须严格限制 EdgeOne 项目与存储访问权限。
 
 <details>
 <summary><strong>完整配置参考</strong></summary>
@@ -135,7 +140,7 @@ Preview 至少检查首页、构建后的静态资源、`/api/health`、`/api/se
 | `KITESIM_TOKEN` | 单账户兼容模式，也是 CLI 使用的变量 |
 | `DASHBOARD_ACCESS_KEY` | 控制台访问口令，至少 12 个字符 |
 | `KITESIM_REQUEST_TIMEOUT` | 上游请求超时，默认 12 秒 |
-| `SMS_CACHE_ENCRYPTION_KEY` | 可选；仅用于读取旧版 AES-256-GCM 快照 |
+| `SMS_CACHE_ENCRYPTION_KEY` | 可选的旧快照迁移密钥；仅读取 AES-256-GCM 快照，手动刷新后改写为明文 JSON |
 | `SMS_CACHE_TTL_SECONDS` | 快照新鲜度，默认 20 秒，范围 5–300 秒 |
 
 本地少量账户也可以使用：
@@ -195,6 +200,7 @@ edgeone.json                      构建、安全响应头与函数配置
 <summary><strong>已知边界</strong></summary>
 
 - Blob TTL 只区分 `hit` 与 `stale`；旧快照不会自动删除，也不会触发自动刷新。
+- `SMS_CACHE_ENCRYPTION_KEY` 不再参与新快照写入；它只能读取同一密钥加密的旧快照，显式刷新成功后该对象将被明文 JSON 覆盖。
 - 定时刷新默认关闭，可由用户选择 30 秒、1 分钟或 5 分钟。
 - 单次最多返回 20 个号码；每个号码最多返回 20 条短信。
 - 默认状态最多并发读取 8 个账户；“全部状态”最多查询 8 个账户，并对每个账户读取 5 种状态。

@@ -40,12 +40,7 @@ const FULL_MESSAGE = {
 const MESSAGE_SNAPSHOT = {
   accountId: "acct_test",
   accountLabel: "测试账户",
-  variants: {
-    masked: [MASKED_MESSAGE],
-    code: [{ ...MASKED_MESSAGE, code: ["438921"] }],
-    sms: [{ ...FULL_MESSAGE, code: ["4****1"] }],
-    full: [FULL_MESSAGE],
-  },
+  items: [FULL_MESSAGE],
   updatedAt: "2026-08-01T10:00:00Z",
 }
 const LEGACY_MESSAGE_SNAPSHOT = {
@@ -200,7 +195,7 @@ describe("EdgeOne message Blob snapshot", () => {
     expect(getStoreImpl).not.toHaveBeenCalled()
   })
 
-  it("writes one plaintext multi-variant snapshot without an encryption key", async () => {
+  it("writes one plaintext full-message snapshot without an encryption key", async () => {
     const store = new FakeStore()
     const fetchImpl = messageOriginFetch()
     const handler = createSmsCacheHandler({
@@ -232,7 +227,7 @@ describe("EdgeOne message Blob snapshot", () => {
       version: 2,
       payload: MESSAGE_SNAPSHOT,
     })
-    expect(store.writes[0].value.payload.variants).toEqual(MESSAGE_SNAPSHOT.variants)
+    expect(store.writes[0].value.payload.variants).toBeUndefined()
   })
 
   it("uses the public EdgeOne host when the runtime request URL points at an internal endpoint", async () => {
@@ -262,7 +257,7 @@ describe("EdgeOne message Blob snapshot", () => {
     expect(response.headers.get("X-SMS-Cache")).toBe("refreshed")
   })
 
-  it("serves all display variants from one Blob snapshot without another origin request", async () => {
+  it("derives all display variants from one Blob snapshot without another origin request", async () => {
     const store = new FakeStore()
     const fetchImpl = messageOriginFetch()
     const handler = createSmsCacheHandler({
@@ -275,17 +270,58 @@ describe("EdgeOne message Blob snapshot", () => {
       request: messageRequest({ ...REQUEST_PAYLOAD, refresh: true }),
       env: BASE_ENV,
     })
-    const cached = await handler({ request: messageRequest(), env: BASE_ENV })
-    const revealed = await handler({
+    const masked = await handler({ request: messageRequest(), env: BASE_ENV })
+    const code = await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, revealCode: true }),
+      env: BASE_ENV,
+    })
+    const sms = await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, showSms: true }),
+      env: BASE_ENV,
+    })
+    const full = await handler({
       request: messageRequest({ ...REQUEST_PAYLOAD, revealCode: true, showSms: true }),
       env: BASE_ENV,
     })
 
-    expect(cached.headers.get("X-SMS-Cache")).toBe("hit")
-    expect(revealed.headers.get("X-SMS-Cache")).toBe("hit")
-    expect((await revealed.json()).items).toEqual([FULL_MESSAGE])
+    expect(masked.headers.get("X-SMS-Cache")).toBe("hit")
+    expect(code.headers.get("X-SMS-Cache")).toBe("hit")
+    expect(sms.headers.get("X-SMS-Cache")).toBe("hit")
+    expect(full.headers.get("X-SMS-Cache")).toBe("hit")
+    expect((await masked.json()).items).toEqual([MASKED_MESSAGE])
+    expect((await code.json()).items).toEqual([{ ...MASKED_MESSAGE, code: ["438921"] }])
+    expect((await sms.json()).items).toEqual([{ ...FULL_MESSAGE, code: ["4****1"] }])
+    expect((await full.json()).items).toEqual([FULL_MESSAGE])
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(store.reads).toHaveLength(0)
+  })
+
+  it("masks segmented codes and long phone numbers from a compact snapshot", async () => {
+    const store = new FakeStore()
+    const snapshot = {
+      ...MESSAGE_SNAPSHOT,
+      items: [{
+        ...FULL_MESSAGE,
+        code: ["123456", "𝟙𝟚𝟛𝟜𝟝𝟞"],
+        content: "Use 123-456, fullwidth １２３４５６, Arabic ١٢٣٤٥٦ and phone 15551234567",
+      }],
+    }
+    const handler = createSmsCacheHandler({
+      fetchImpl: messageOriginFetch(snapshot),
+      getStoreImpl: () => store,
+      nowImpl: () => 2_250_000,
+    })
+
+    const response = await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, refresh: true }),
+      env: BASE_ENV,
+    })
+
+    expect((await response.json()).items).toEqual([{
+      ...FULL_MESSAGE,
+      code: ["1****6", "𝟙****𝟞"],
+      content: "Use ***-***, fullwidth ******, Arabic ****** and phone ***********",
+    }])
   })
 
   it("coalesces concurrent reads for the same snapshot on a cold handler", async () => {
@@ -340,10 +376,7 @@ describe("EdgeOne message Blob snapshot", () => {
     })
     const updatedSnapshot = {
       ...MESSAGE_SNAPSHOT,
-      variants: {
-        ...MESSAGE_SNAPSHOT.variants,
-        masked: [{ ...MASKED_MESSAGE, sender: "Updated sender" }],
-      },
+      items: [{ ...FULL_MESSAGE, sender: "Updated sender" }],
     }
     store.objects.set(createSmsCacheKey(REQUEST_PAYLOAD), {
       version: 2,
@@ -380,6 +413,130 @@ describe("EdgeOne message Blob snapshot", () => {
     expect(stale.headers.get("X-SMS-Cache")).toBe("stale")
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(store.writes).toHaveLength(1)
+  })
+
+  it("starts the refreshed TTL after a slow origin request completes", async () => {
+    const store = new FakeStore()
+    let now = 0
+    const fetchImpl = vi.fn(async () => {
+      now = 30_000
+      return new Response(JSON.stringify(MESSAGE_SNAPSHOT), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    })
+    const handler = createSmsCacheHandler({
+      fetchImpl,
+      getStoreImpl: () => store,
+      nowImpl: () => now,
+    })
+
+    await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, refresh: true }),
+      env: BASE_ENV,
+    })
+    const cached = await handler({ request: messageRequest(), env: BASE_ENV })
+
+    expect(cached.headers.get("X-SMS-Cache")).toBe("hit")
+    expect(store.writes[0].value).toMatchObject({
+      cachedAt: 30_000,
+      expiresAt: 50_000,
+    })
+  })
+
+  it("does not let an older in-flight Blob read overwrite a refreshed L1 record", async () => {
+    const store = new FakeStore()
+    const objectKey = createSmsCacheKey(REQUEST_PAYLOAD)
+    const oldRecord = {
+      version: 2,
+      cachedAt: 40_000,
+      expiresAt: 60_000,
+      payload: {
+        ...MESSAGE_SNAPSHOT,
+        items: [{ ...FULL_MESSAGE, sender: "Old sender" }],
+      },
+    }
+    let resolveRead
+    store.get = vi.fn(() => new Promise((resolve) => {
+      resolveRead = () => resolve(oldRecord)
+    }))
+    const handler = createSmsCacheHandler({
+      fetchImpl: messageOriginFetch({
+        ...MESSAGE_SNAPSHOT,
+        items: [{ ...FULL_MESSAGE, sender: "New sender" }],
+      }),
+      getStoreImpl: () => store,
+      nowImpl: () => 45_000,
+    })
+
+    const olderRead = handler({ request: messageRequest(), env: BASE_ENV })
+    await vi.waitFor(() => expect(store.get).toHaveBeenCalledOnce())
+    await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, refresh: true }),
+      env: BASE_ENV,
+    })
+    resolveRead()
+    await olderRead
+
+    const current = await handler({ request: messageRequest(), env: BASE_ENV })
+
+    expect(store.objects.get(objectKey).payload.items[0].sender).toBe("New sender")
+    expect((await current.json()).items[0].sender).toBe("New sender")
+  })
+
+  it("serves a concurrent refresh when an older in-flight Blob read returns missing", async () => {
+    const store = new FakeStore()
+    let resolveRead
+    store.get = vi.fn(() => new Promise((resolve) => {
+      resolveRead = () => resolve(null)
+    }))
+    const handler = createSmsCacheHandler({
+      fetchImpl: messageOriginFetch(MESSAGE_SNAPSHOT),
+      getStoreImpl: () => store,
+      nowImpl: () => 47_000,
+    })
+
+    const olderRead = handler({ request: messageRequest(), env: BASE_ENV })
+    await vi.waitFor(() => expect(store.get).toHaveBeenCalledOnce())
+    await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, refresh: true }),
+      env: BASE_ENV,
+    })
+    resolveRead()
+    const response = await olderRead
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("X-SMS-Cache")).toBe("hit")
+    expect((await response.json()).items).toEqual([MASKED_MESSAGE])
+  })
+
+  it("serves a concurrent refresh when an older in-flight Blob read fails", async () => {
+    const store = new FakeStore()
+    let rejectRead
+    store.get = vi.fn(() => new Promise((_resolve, reject) => {
+      rejectRead = () => reject(Object.assign(new Error("unavailable"), {
+        code: "BLOB_UNAVAILABLE",
+      }))
+    }))
+    const handler = createSmsCacheHandler({
+      fetchImpl: messageOriginFetch(MESSAGE_SNAPSHOT),
+      getStoreImpl: () => store,
+      logger: vi.fn(),
+      nowImpl: () => 48_000,
+    })
+
+    const olderRead = handler({ request: messageRequest(), env: BASE_ENV })
+    await vi.waitFor(() => expect(store.get).toHaveBeenCalledOnce())
+    await handler({
+      request: messageRequest({ ...REQUEST_PAYLOAD, refresh: true }),
+      env: BASE_ENV,
+    })
+    rejectRead()
+    const response = await olderRead
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("X-SMS-Cache")).toBe("hit")
+    expect((await response.json()).items).toEqual([MASKED_MESSAGE])
   })
 
   it("reads plaintext snapshots without an encryption key", async () => {
@@ -567,6 +724,32 @@ describe("EdgeOne orders Blob snapshot", () => {
     expect(store.writes).toHaveLength(1)
     expect(store.reads).toHaveLength(0)
     expect(getStoreImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it("starts the orders TTL after a slow origin request completes", async () => {
+    const store = new FakeStore()
+    let now = 0
+    const fetchImpl = vi.fn(async () => {
+      now = 30_000
+      return new Response(JSON.stringify(ORDERS_SNAPSHOT), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    })
+    const handler = createOrdersCacheHandler({
+      fetchImpl,
+      getStoreImpl: () => store,
+      nowImpl: () => now,
+    })
+
+    await handler({ request: ordersRequest(true), env: BASE_ENV })
+    const cached = await handler({ request: ordersRequest(), env: BASE_ENV })
+
+    expect(cached.headers.get("X-SMS-Cache")).toBe("hit")
+    expect(store.writes[0].value).toMatchObject({
+      cachedAt: 30_000,
+      expiresAt: 50_000,
+    })
   })
 
   it("uses the public EdgeOne host for an orders refresh from an internal runtime URL", async () => {

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
   <title id="title">Kitesim Relay 双路径架构</title>
-  <desc id="desc">普通读取只在浏览器、EdgeOne API 与 Blob 快照之间完成；只有显式刷新才经过 Python、Scrapling 和 Kitesim GET API，并将新快照写回 Blob。</desc>
+  <desc id="desc">普通读取在浏览器、复用 Blob Store 和短时 L1 的 EdgeOne API、以及版本化明文 JSON Blob 之间完成；只有显式刷新才经过 Python、Scrapling 和 Kitesim GET API，并将新快照写回 Blob。旧 AES 快照可使用可选迁移密钥读取，显式刷新后覆盖为明文 JSON。</desc>
 
   <rect x="1" y="1" width="1198" height="618" rx="26" fill="#0B1020" stroke="#263147" stroke-width="2"/>
 
@@ -21,15 +21,15 @@
     <g transform="translate(356 220)">
       <rect width="224" height="118" rx="18" fill="#172554" stroke="#4F46E5" stroke-width="2"/>
       <circle cx="30" cy="30" r="7" fill="#34D399"/>
-      <text x="52" y="38" fill="#C7D2FE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">EDGEONE</text>
+      <text x="52" y="38" fill="#C7D2FE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">EDGEONE · L1</text>
       <text x="24" y="83" fill="#F8FAFC" font-size="30" font-weight="700">Node API</text>
     </g>
 
     <g transform="translate(680 220)">
       <rect width="224" height="118" rx="18" fill="#102A2B" stroke="#047857" stroke-width="2"/>
       <circle cx="30" cy="30" r="7" fill="#34D399"/>
-      <text x="52" y="38" fill="#A7F3D0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">BLOB-FIRST</text>
-      <text x="24" y="83" fill="#F8FAFC" font-size="30" font-weight="700">Snapshot Store</text>
+      <text x="52" y="38" fill="#A7F3D0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">VERSIONED JSON</text>
+      <text x="24" y="83" fill="#F8FAFC" font-size="30" font-weight="700">Blob Snapshot</text>
     </g>
 
     <path d="M250 279H348" stroke="#4F46E5" stroke-width="4" stroke-linecap="round"/>
@@ -64,7 +64,7 @@
     <path d="M1000 490H900C846 490 826 454 826 396V346" fill="none" stroke="#34D399" stroke-width="3" stroke-dasharray="7 8"/>
     <path d="M814 360l12-14 12 14" fill="none" stroke="#34D399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
     <text x="754" y="448" fill="#A7F3D0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700">SERVER-HELD TOKEN</text>
-    <text x="850" y="535" fill="#94A3B8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">SNAPSHOT WRITE-BACK</text>
+    <text x="850" y="535" fill="#94A3B8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">PLAINTEXT JSON WRITE</text>
 
     <g transform="translate(60 592)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="650">
       <circle cx="7" cy="-6" r="6" fill="#4F46E5"/>
@@ -72,6 +72,7 @@
       <circle cx="112" cy="-6" r="6" fill="#34D399"/>
       <text x="130" y="1" fill="#A7F3D0">REFRESH</text>
       <text x="282" y="1" fill="#64748B">HIT / STALE / EMPTY NEVER AUTO-REFRESH</text>
+      <text x="720" y="1" fill="#A7F3D0">LEGACY AES → JSON ON REFRESH</text>
     </g>
   </g>
 </svg>

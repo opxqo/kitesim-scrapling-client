@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="460" viewBox="0 0 1200 460" role="img" aria-labelledby="title desc">
   <title id="title">Kitesim Relay</title>
-  <desc id="desc">Kitesim Relay 将多个 Kitesim 账户的号码、短信与验证码汇聚为一条服务端保护的只读信号链。</desc>
+  <desc id="desc">Kitesim Relay 将多个 Kitesim 账户的号码、短信与验证码汇聚为一条由服务端 Token 与版本化 JSON Blob 支撑的只读信号链。</desc>
 
   <rect x="1" y="1" width="1198" height="458" rx="26" fill="#0B1020" stroke="#263147" stroke-width="2"/>
   <path d="M714 48V412" stroke="#263147" stroke-width="2"/>
@@ -23,7 +23,7 @@
       <text x="166" y="1" fill="#475569">/</text>
       <text x="190" y="1" fill="#94A3B8">SERVER-HELD TOKENS</text>
       <text x="430" y="1" fill="#475569">/</text>
-      <text x="454" y="1" fill="#94A3B8">BLOB-FIRST SNAPSHOTS</text>
+      <text x="454" y="1" fill="#94A3B8">VERSIONED JSON BLOB</text>
     </g>
 
     <g transform="translate(748 50)">

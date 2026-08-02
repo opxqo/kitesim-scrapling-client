@@ -257,8 +257,15 @@ function createStoreResolver(getStoreImpl, logger) {
 function createHotRecordCache(nowImpl) {
   const records = new Map()
   const pendingReads = new Map()
+  const writeGenerations = new Map()
 
-  function remember(objectKey, record) {
+  function cleanupGeneration(objectKey) {
+    if (!records.has(objectKey) && !pendingReads.has(objectKey)) {
+      writeGenerations.delete(objectKey)
+    }
+  }
+
+  function cacheRecord(objectKey, record) {
     records.delete(objectKey)
     records.set(objectKey, {
       record,
@@ -268,7 +275,13 @@ function createHotRecordCache(nowImpl) {
       const oldestKey = records.keys().next().value
       if (oldestKey === undefined) break
       records.delete(oldestKey)
+      cleanupGeneration(oldestKey)
     }
+  }
+
+  function remember(objectKey, record) {
+    writeGenerations.set(objectKey, (writeGenerations.get(objectKey) || 0) + 1)
+    cacheRecord(objectKey, record)
   }
 
   function recall(objectKey) {
@@ -276,6 +289,7 @@ function createHotRecordCache(nowImpl) {
     if (!cached) return { found: false, record: null }
     if (cached.retainedUntil <= nowImpl()) {
       records.delete(objectKey)
+      cleanupGeneration(objectKey)
       return { found: false, record: null }
     }
     records.delete(objectKey)
@@ -290,12 +304,25 @@ function createHotRecordCache(nowImpl) {
     const pending = pendingReads.get(objectKey)
     if (pending) return pending
 
+    const readGeneration = writeGenerations.get(objectKey) || 0
     const operation = readRecord(store, objectKey, legacyKey, logger)
       .then((result) => {
-        if (!result.unavailable && result.record) remember(objectKey, result.record)
+        const refreshedDuringRead = (writeGenerations.get(objectKey) || 0) !== readGeneration
+        if (refreshedDuringRead) {
+          const refreshed = recall(objectKey)
+          if (refreshed.found) {
+            return { record: refreshed.record, unavailable: false }
+          }
+        }
+        if (!refreshedDuringRead && !result.unavailable && result.record) {
+          cacheRecord(objectKey, result.record)
+        }
         return result
       })
-      .finally(() => pendingReads.delete(objectKey))
+      .finally(() => {
+        pendingReads.delete(objectKey)
+        cleanupGeneration(objectKey)
+      })
     pendingReads.set(objectKey, operation)
     return operation
   }
@@ -383,19 +410,59 @@ function messageVariantName(payload) {
 }
 
 
+function maskCode(code) {
+  const characters = [...String(code || "")]
+  if (characters.length <= 2) return "*".repeat(characters.length)
+  return `${characters[0]}${"*".repeat(characters.length - 2)}${characters.at(-1)}`
+}
+
+
+function maskMessage(content) {
+  const segmentedDigits = /(?<!\p{Nd})\p{Nd}{2,4}(?:[\s\u00a0\-‐‑‒–—]\p{Nd}{2,4}){1,2}(?!\p{Nd})/gu
+  return String(content || "")
+    .replace(segmentedDigits, (match) => match.replace(/\p{Nd}/gu, "*"))
+    .replace(/\p{Nd}{4,}/gu, (match) => "*".repeat([...match].length))
+}
+
+
 function validMessageSnapshot(snapshot) {
   return Boolean(
     snapshot
       && typeof snapshot === "object"
-      && snapshot.variants
-      && typeof snapshot.variants === "object"
-      && ["masked", "code", "sms", "full"].every((name) => Array.isArray(snapshot.variants[name])),
+      && (
+        Array.isArray(snapshot.items)
+        || (
+          snapshot.variants
+          && typeof snapshot.variants === "object"
+          && ["masked", "code", "sms", "full"]
+            .every((name) => Array.isArray(snapshot.variants[name]))
+        )
+      ),
   )
 }
 
 
+function messageItems(snapshot, requestPayload) {
+  if (!Array.isArray(snapshot.items)) {
+    return snapshot.variants[messageVariantName(requestPayload)]
+  }
+
+  const revealCode = requestPayload.revealCode === true
+  const showSms = requestPayload.showSms === true
+  return snapshot.items.map((item) => {
+    const source = item && typeof item === "object" ? item : {}
+    const codes = Array.isArray(source.code) ? source.code : []
+    return {
+      ...source,
+      code: codes.map((code) => revealCode ? String(code) : maskCode(code)),
+      content: showSms ? String(source.content || "") : maskMessage(source.content),
+    }
+  })
+}
+
+
 function messageResponse(snapshot, requestPayload, cacheStatus) {
-  const items = snapshot.variants[messageVariantName(requestPayload)]
+  const items = messageItems(snapshot, requestPayload)
   return jsonResponse(
     {
       items,
@@ -488,7 +555,6 @@ export function createSmsCacheHandler(dependencies = {}) {
     const objectKey = createSmsCacheKey(payload)
     const legacyKey = encryptionKey(context)
     const ttlSeconds = cacheTtlSeconds(context)
-    const now = nowImpl()
     const refresh = payload.refresh === true
 
     if (refresh) {
@@ -499,7 +565,7 @@ export function createSmsCacheHandler(dependencies = {}) {
       }
 
       const store = resolveStore()
-      const record = buildRecord(origin.payload, now, ttlSeconds)
+      const record = buildRecord(origin.payload, nowImpl(), ttlSeconds)
       const stored = await writeRecord(
         store,
         objectKey,
@@ -523,7 +589,7 @@ export function createSmsCacheHandler(dependencies = {}) {
     if (!validRecord(cached.record, validMessageSnapshot)) {
       return emptyMessageResponse(payload)
     }
-    return messageResponse(cached.record.payload, payload, recordStatus(cached.record, now))
+    return messageResponse(cached.record.payload, payload, recordStatus(cached.record, nowImpl()))
   }
 }
 
@@ -615,7 +681,6 @@ export function createOrdersCacheHandler(dependencies = {}) {
     const objectKey = createOrdersCacheKey(query, authorization.expected)
     const legacyKey = encryptionKey(context)
     const ttlSeconds = cacheTtlSeconds(context)
-    const now = nowImpl()
 
     if (query.refresh) {
       const origin = await fetchOrdersSnapshot(request, query, fetchImpl, "refresh")
@@ -625,7 +690,7 @@ export function createOrdersCacheHandler(dependencies = {}) {
       }
 
       const store = resolveStore()
-      const record = buildRecord(origin.payload, now, ttlSeconds)
+      const record = buildRecord(origin.payload, nowImpl(), ttlSeconds)
       const stored = await writeRecord(
         store,
         objectKey,
@@ -643,6 +708,6 @@ export function createOrdersCacheHandler(dependencies = {}) {
     const cached = await hotRecords.read(store, objectKey, legacyKey, logger)
     if (cached.unavailable) return errorResponse("Blob 缓存读取失败", 503, "storage")
     if (!validRecord(cached.record, validOrdersSnapshot)) return emptyOrdersResponse(query)
-    return jsonResponse(cached.record.payload, 200, recordStatus(cached.record, now))
+    return jsonResponse(cached.record.payload, 200, recordStatus(cached.record, nowImpl()))
   }
 }

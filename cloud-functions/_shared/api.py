@@ -345,37 +345,16 @@ def create_api_blueprint() -> Blueprint:
             sms_data = client.get_phone_sms(order_id, phone_number)
             updated_at = _utc_now()
             if cache_snapshot:
-                variants = {
-                    "masked": build_messages(
-                        sms_data,
-                        show_code=False,
-                        show_sms=False,
-                        limit=20,
-                    ),
-                    "code": build_messages(
-                        sms_data,
-                        show_code=True,
-                        show_sms=False,
-                        limit=20,
-                    ),
-                    "sms": build_messages(
-                        sms_data,
-                        show_code=False,
-                        show_sms=True,
-                        limit=20,
-                    ),
-                    "full": build_messages(
-                        sms_data,
-                        show_code=True,
-                        show_sms=True,
-                        limit=20,
-                    ),
-                }
                 return jsonify(
                     {
                         "accountId": account.id,
                         "accountLabel": account.label,
-                        "variants": variants,
+                        "items": build_messages(
+                            sms_data,
+                            show_code=True,
+                            show_sms=True,
+                            limit=20,
+                        ),
                         "updatedAt": updated_at,
                     }
                 )
