@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">Kitesim Relay 双路径架构</title>
+  <desc id="desc">普通读取只在浏览器、EdgeOne API 与 Blob 快照之间完成；只有显式刷新才经过 Python、Scrapling 和 Kitesim GET API，并将新快照写回 Blob。</desc>
+
+  <rect x="1" y="1" width="1198" height="618" rx="26" fill="#0B1020" stroke="#263147" stroke-width="2"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+    <text x="60" y="74" fill="#F8FAFC" font-size="48" font-weight="740">Blob 优先，刷新才回源</text>
+    <text x="60" y="112" fill="#94A3B8" font-size="24">读取与回源是两条明确分开的数据路径。</text>
+
+    <rect x="302" y="148" width="654" height="414" rx="22" fill="#10182B" stroke="#334155" stroke-width="2" stroke-dasharray="8 10"/>
+    <text x="330" y="182" fill="#64748B" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="21" font-weight="700" letter-spacing="1.3">SERVER TRUST BOUNDARY</text>
+
+    <g transform="translate(60 220)">
+      <rect width="190" height="118" rx="18" fill="#111827" stroke="#334155" stroke-width="2"/>
+      <circle cx="30" cy="30" r="7" fill="#4F46E5"/>
+      <text x="52" y="38" fill="#A5B4FC" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">BROWSER</text>
+      <text x="24" y="83" fill="#F8FAFC" font-size="30" font-weight="700">私有控制台</text>
+    </g>
+
+    <g transform="translate(356 220)">
+      <rect width="224" height="118" rx="18" fill="#172554" stroke="#4F46E5" stroke-width="2"/>
+      <circle cx="30" cy="30" r="7" fill="#34D399"/>
+      <text x="52" y="38" fill="#C7D2FE" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">EDGEONE</text>
+      <text x="24" y="83" fill="#F8FAFC" font-size="30" font-weight="700">Node API</text>
+    </g>
+
+    <g transform="translate(680 220)">
+      <rect width="224" height="118" rx="18" fill="#102A2B" stroke="#047857" stroke-width="2"/>
+      <circle cx="30" cy="30" r="7" fill="#34D399"/>
+      <text x="52" y="38" fill="#A7F3D0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">BLOB-FIRST</text>
+      <text x="24" y="83" fill="#F8FAFC" font-size="30" font-weight="700">Snapshot Store</text>
+    </g>
+
+    <path d="M250 279H348" stroke="#4F46E5" stroke-width="4" stroke-linecap="round"/>
+    <path d="M334 267l14 12-14 12" fill="none" stroke="#4F46E5" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M588 279H672" stroke="#34D399" stroke-width="4" stroke-linecap="round"/>
+    <path d="M658 267l14 12-14 12" fill="none" stroke="#34D399" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M680 313H588" stroke="#64748B" stroke-width="3" stroke-linecap="round"/>
+    <path d="M602 302l-14 11 14 11" fill="none" stroke="#64748B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M356 313H258" stroke="#64748B" stroke-width="3" stroke-linecap="round"/>
+    <path d="M272 302l-14 11 14 11" fill="none" stroke="#64748B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="264" y="246" fill="#A5B4FC" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700">NORMAL READ</text>
+    <text x="255" y="352" fill="#94A3B8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">MASKED RESPONSE</text>
+
+    <g transform="translate(438 406)">
+      <rect width="276" height="112" rx="18" fill="#111827" stroke="#475569" stroke-width="2"/>
+      <circle cx="30" cy="30" r="7" fill="#34D399"/>
+      <text x="52" y="38" fill="#A7F3D0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">EXPLICIT REFRESH</text>
+      <text x="24" y="80" fill="#F8FAFC" font-size="28" font-weight="700">Python + Scrapling</text>
+    </g>
+
+    <g transform="translate(1000 406)">
+      <rect width="146" height="112" rx="18" fill="#111827" stroke="#475569" stroke-width="2"/>
+      <circle cx="28" cy="30" r="7" fill="#34D399"/>
+      <text x="48" y="38" fill="#A7F3D0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700">GET</text>
+      <text x="22" y="80" fill="#F8FAFC" font-size="28" font-weight="700">Kitesim</text>
+    </g>
+
+    <path d="M468 338V398" stroke="#34D399" stroke-width="3" stroke-dasharray="7 8"/>
+    <path d="M456 384l12 14 12-14" fill="none" stroke="#34D399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M722 462H992" stroke="#34D399" stroke-width="3" stroke-dasharray="7 8"/>
+    <path d="M978 450l14 12-14 12" fill="none" stroke="#34D399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M1000 490H900C846 490 826 454 826 396V346" fill="none" stroke="#34D399" stroke-width="3" stroke-dasharray="7 8"/>
+    <path d="M814 360l12-14 12 14" fill="none" stroke="#34D399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="754" y="448" fill="#A7F3D0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700">SERVER-HELD TOKEN</text>
+    <text x="850" y="535" fill="#94A3B8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">SNAPSHOT WRITE-BACK</text>
+
+    <g transform="translate(60 592)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="650">
+      <circle cx="7" cy="-6" r="6" fill="#4F46E5"/>
+      <text x="25" y="1" fill="#A5B4FC">READ</text>
+      <circle cx="112" cy="-6" r="6" fill="#34D399"/>
+      <text x="130" y="1" fill="#A7F3D0">REFRESH</text>
+      <text x="282" y="1" fill="#64748B">HIT / STALE / EMPTY NEVER AUTO-REFRESH</text>
+    </g>
+  </g>
+</svg>

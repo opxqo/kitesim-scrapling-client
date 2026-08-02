@@ -1,8 +1,6 @@
 import {
-  createCipheriv,
   createDecipheriv,
   createHash,
-  randomBytes,
   timingSafeEqual,
 } from "node:crypto"
 
@@ -16,6 +14,8 @@ const CACHE_STORE_NAME = "kitesim-sms-cache"
 const DEFAULT_CACHE_TTL_SECONDS = 20
 const MIN_CACHE_TTL_SECONDS = 5
 const MAX_CACHE_TTL_SECONDS = 300
+const HOT_CACHE_MAX_ENTRIES = 64
+const HOT_CACHE_TTL_MS = 5_000
 const MAX_REQUEST_BODY_BYTES = 8 * 1024
 const MESSAGE_ORIGIN_PATH = "/origin/messages-origin"
 const ORDERS_ORIGIN_PATH = "/origin/orders-origin"
@@ -183,25 +183,7 @@ async function fetchJson(fetchImpl, url, options, cacheStatus) {
 }
 
 
-function encryptRecord(record, key, objectKey, randomBytesImpl) {
-  const iv = randomBytesImpl(12)
-  const cipher = createCipheriv("aes-256-gcm", key, iv)
-  cipher.setAAD(Buffer.from(objectKey, "utf8"))
-  const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify(record), "utf8"),
-    cipher.final(),
-  ])
-  return {
-    version: CACHE_ENVELOPE_VERSION,
-    algorithm: "A256GCM",
-    iv: iv.toString("base64"),
-    tag: cipher.getAuthTag().toString("base64"),
-    ciphertext: ciphertext.toString("base64"),
-  }
-}
-
-
-function decryptRecord(envelope, key, objectKey) {
+function decryptLegacyRecord(envelope, key, objectKey) {
   if (
     !envelope
     || typeof envelope !== "object"
@@ -261,29 +243,98 @@ function cacheStore(getStoreImpl, logger) {
 }
 
 
-async function readRecord(store, objectKey, key, logger) {
-  let envelope
+function createStoreResolver(getStoreImpl, logger) {
+  let resolvedStore = null
+  return function resolveStore() {
+    if (resolvedStore) return resolvedStore
+    const nextStore = cacheStore(getStoreImpl, logger)
+    if (nextStore) resolvedStore = nextStore
+    return nextStore
+  }
+}
+
+
+function createHotRecordCache(nowImpl) {
+  const records = new Map()
+  const pendingReads = new Map()
+
+  function remember(objectKey, record) {
+    records.delete(objectKey)
+    records.set(objectKey, {
+      record,
+      retainedUntil: nowImpl() + HOT_CACHE_TTL_MS,
+    })
+    while (records.size > HOT_CACHE_MAX_ENTRIES) {
+      const oldestKey = records.keys().next().value
+      if (oldestKey === undefined) break
+      records.delete(oldestKey)
+    }
+  }
+
+  function recall(objectKey) {
+    const cached = records.get(objectKey)
+    if (!cached) return { found: false, record: null }
+    if (cached.retainedUntil <= nowImpl()) {
+      records.delete(objectKey)
+      return { found: false, record: null }
+    }
+    records.delete(objectKey)
+    records.set(objectKey, cached)
+    return { found: true, record: cached.record }
+  }
+
+  async function read(store, objectKey, legacyKey, logger) {
+    const cached = recall(objectKey)
+    if (cached.found) return { record: cached.record, unavailable: false }
+
+    const pending = pendingReads.get(objectKey)
+    if (pending) return pending
+
+    const operation = readRecord(store, objectKey, legacyKey, logger)
+      .then((result) => {
+        if (!result.unavailable && result.record) remember(objectKey, result.record)
+        return result
+      })
+      .finally(() => pendingReads.delete(objectKey))
+    pendingReads.set(objectKey, operation)
+    return operation
+  }
+
+  return { read, remember }
+}
+
+
+async function readRecord(store, objectKey, legacyKey, logger) {
+  let storedValue
   try {
-    envelope = await store.get(objectKey, { type: "json" })
+    storedValue = await store.get(objectKey, { type: "json" })
   } catch (error) {
     cacheWarning(logger, "read", error)
     return { record: null, unavailable: true }
   }
-  if (!envelope) return { record: null, unavailable: false }
+  if (!storedValue) return { record: null, unavailable: false }
+  if (
+    storedValue
+    && typeof storedValue === "object"
+    && storedValue.version === CACHE_RECORD_VERSION
+    && "payload" in storedValue
+  ) {
+    return { record: storedValue, unavailable: false }
+  }
+  if (!legacyKey) return { record: null, unavailable: false }
   try {
-    return { record: decryptRecord(envelope, key, objectKey), unavailable: false }
+    return { record: decryptLegacyRecord(storedValue, legacyKey, objectKey), unavailable: false }
   } catch (error) {
-    cacheWarning(logger, "decrypt", error)
+    cacheWarning(logger, "legacy decrypt", error)
     return { record: null, unavailable: false }
   }
 }
 
 
-async function writeRecord(store, objectKey, record, key, ttlSeconds, randomBytesImpl, logger) {
-  if (!store || !key) return false
-  const envelope = encryptRecord(record, key, objectKey, randomBytesImpl)
+async function writeRecord(store, objectKey, record, ttlSeconds, logger) {
+  if (!store) return false
   try {
-    await store.setJSON(objectKey, envelope, {
+    await store.setJSON(objectKey, record, {
       cacheControl: `max-age=${ttlSeconds}, stale-while-revalidate=${ttlSeconds}`,
     })
     return true
@@ -402,8 +453,9 @@ export function createSmsCacheHandler(dependencies = {}) {
   const getStoreImpl = dependencies.getStoreImpl || getStore
   const fetchImpl = dependencies.fetchImpl || globalThis.fetch
   const nowImpl = dependencies.nowImpl || Date.now
-  const randomBytesImpl = dependencies.randomBytesImpl || randomBytes
   const logger = dependencies.logger || console.warn
+  const resolveStore = createStoreResolver(getStoreImpl, logger)
+  const hotRecords = createHotRecordCache(nowImpl)
 
   return async function onRequest(context) {
     const request = context?.request
@@ -434,7 +486,7 @@ export function createSmsCacheHandler(dependencies = {}) {
     }
 
     const objectKey = createSmsCacheKey(payload)
-    const key = encryptionKey(context)
+    const legacyKey = encryptionKey(context)
     const ttlSeconds = cacheTtlSeconds(context)
     const now = nowImpl()
     const refresh = payload.refresh === true
@@ -446,28 +498,25 @@ export function createSmsCacheHandler(dependencies = {}) {
         return errorResponse("短信回源快照格式无效", 502, "upstream", "refresh")
       }
 
-      const store = key ? cacheStore(getStoreImpl, logger) : null
+      const store = resolveStore()
+      const record = buildRecord(origin.payload, now, ttlSeconds)
       const stored = await writeRecord(
         store,
         objectKey,
-        buildRecord(origin.payload, now, ttlSeconds),
-        key,
+        record,
         ttlSeconds,
-        randomBytesImpl,
         logger,
       )
+      if (stored) hotRecords.remember(objectKey, record)
       return messageResponse(origin.payload, payload, stored ? "refreshed" : "bypass")
     }
 
-    if (!key) {
-      return errorResponse("服务端尚未配置短信缓存加密密钥", 503, "configuration")
-    }
-    const store = cacheStore(getStoreImpl, logger)
+    const store = resolveStore()
     if (!store) {
       return errorResponse("Blob 缓存暂时不可用", 503, "storage")
     }
 
-    const cached = await readRecord(store, objectKey, key, logger)
+    const cached = await hotRecords.read(store, objectKey, legacyKey, logger)
     if (cached.unavailable) {
       return errorResponse("Blob 缓存读取失败", 503, "storage")
     }
@@ -548,8 +597,9 @@ export function createOrdersCacheHandler(dependencies = {}) {
   const getStoreImpl = dependencies.getStoreImpl || getStore
   const fetchImpl = dependencies.fetchImpl || globalThis.fetch
   const nowImpl = dependencies.nowImpl || Date.now
-  const randomBytesImpl = dependencies.randomBytesImpl || randomBytes
   const logger = dependencies.logger || console.warn
+  const resolveStore = createStoreResolver(getStoreImpl, logger)
+  const hotRecords = createHotRecordCache(nowImpl)
 
   return async function onRequest(context) {
     const request = context?.request
@@ -563,7 +613,7 @@ export function createOrdersCacheHandler(dependencies = {}) {
     if (!query) return errorResponse("订单缓存查询参数无效", 400, "validation")
 
     const objectKey = createOrdersCacheKey(query, authorization.expected)
-    const key = encryptionKey(context)
+    const legacyKey = encryptionKey(context)
     const ttlSeconds = cacheTtlSeconds(context)
     const now = nowImpl()
 
@@ -574,26 +624,23 @@ export function createOrdersCacheHandler(dependencies = {}) {
         return errorResponse("号码回源快照格式无效", 502, "upstream", "refresh")
       }
 
-      const store = key ? cacheStore(getStoreImpl, logger) : null
+      const store = resolveStore()
+      const record = buildRecord(origin.payload, now, ttlSeconds)
       const stored = await writeRecord(
         store,
         objectKey,
-        buildRecord(origin.payload, now, ttlSeconds),
-        key,
+        record,
         ttlSeconds,
-        randomBytesImpl,
         logger,
       )
+      if (stored) hotRecords.remember(objectKey, record)
       return jsonResponse(origin.payload, 200, stored ? "refreshed" : "bypass")
     }
 
-    if (!key) {
-      return errorResponse("服务端尚未配置缓存加密密钥", 503, "configuration")
-    }
-    const store = cacheStore(getStoreImpl, logger)
+    const store = resolveStore()
     if (!store) return errorResponse("Blob 缓存暂时不可用", 503, "storage")
 
-    const cached = await readRecord(store, objectKey, key, logger)
+    const cached = await hotRecords.read(store, objectKey, legacyKey, logger)
     if (cached.unavailable) return errorResponse("Blob 缓存读取失败", 503, "storage")
     if (!validRecord(cached.record, validOrdersSnapshot)) return emptyOrdersResponse(query)
     return jsonResponse(cached.record.payload, 200, recordStatus(cached.record, now))
