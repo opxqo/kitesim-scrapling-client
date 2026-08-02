@@ -23,6 +23,29 @@ export function maskPhoneNumber(value: string): string {
   return `+${countryCode} ${visiblePrefix} ••• •${suffix}`
 }
 
+export function displaySensitiveIdentifier(value: string, masked: boolean): string {
+  const label = String(value || "").trim()
+  if (!label) return "—"
+  if (!masked) return label
+
+  return label.replace(/\+?\d[\d\s().-]{5,}\d/g, (candidate) => {
+    const digits = candidate.replace(/\D/g, "")
+    return digits.length >= 7 ? maskPhoneNumber(candidate) : candidate
+  })
+}
+
+export function displayMessageContent(value: string, masked: boolean): string {
+  if (masked) return "短信正文已隐藏"
+  return value || "无短信正文"
+}
+
+export function privacyMessageOptions(masked: boolean) {
+  return {
+    revealCode: !masked,
+    showSms: !masked,
+  }
+}
+
 export function buildAccountGroups(orders: KitesimOrder[]): AccountGroup[] {
   const groups = new Map<string, AccountGroup>()
 

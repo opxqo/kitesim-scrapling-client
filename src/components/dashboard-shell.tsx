@@ -58,12 +58,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { DashboardController } from "@/hooks/use-dashboard"
 import {
   buildAccountGroups,
+  displayMessageContent,
+  displaySensitiveIdentifier,
   firstCodeRecord,
   formatDateTime,
   formatPackage,
   formatShortTime,
   isCodeRevealed,
-  maskPhoneNumber,
   orderKey,
   statusLabel,
 } from "@/lib/dashboard"
@@ -96,7 +97,11 @@ const CACHE_STATUS_LABEL: Record<CacheStatus, string> = {
 }
 
 function displayPhone(order: KitesimOrder, masked: boolean) {
-  return masked ? maskPhoneNumber(order.phoneNumber) : order.phoneNumber
+  return displaySensitiveIdentifier(order.phoneNumber, masked)
+}
+
+function displayIdentifier(value: string, masked: boolean) {
+  return displaySensitiveIdentifier(value, masked)
 }
 
 function StatusBadge({ order }: { order: KitesimOrder }) {
@@ -178,12 +183,13 @@ function WorkspaceHeader({ dashboard }: { dashboard: DashboardController }) {
               size="icon"
               className="md:hidden"
               onClick={() => dashboard.setPrivacyMasked(!dashboard.privacyMasked)}
-              aria-label={dashboard.privacyMasked ? "显示完整号码" : "遮罩电话号码"}
+              disabled={busy}
+              aria-label={dashboard.privacyMasked ? "显示所有敏感信息" : "隐藏所有敏感信息"}
             >
               {dashboard.privacyMasked ? <EyeOff /> : <Eye />}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{dashboard.privacyMasked ? "显示完整号码" : "恢复隐私遮罩"}</TooltipContent>
+          <TooltipContent>{dashboard.privacyMasked ? "显示所有敏感信息" : "恢复全部隐私遮罩"}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -198,11 +204,12 @@ function WorkspaceHeader({ dashboard }: { dashboard: DashboardController }) {
                 size="sm"
                 checked={dashboard.privacyMasked}
                 onCheckedChange={dashboard.setPrivacyMasked}
-                aria-label="切换号码隐私遮罩"
+                disabled={busy}
+                aria-label="切换全部敏感信息隐私遮罩"
               />
             </div>
           </TooltipTrigger>
-          <TooltipContent>统一遮罩页面中的电话号码</TooltipContent>
+          <TooltipContent>统一遮罩手机号、电话型账户名、短信来源、正文和验证码</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -288,7 +295,9 @@ function MetricStrip({ dashboard }: { dashboard: DashboardController }) {
     {
       label: "短信记录",
       value: String(dashboard.messages.length),
-      note: dashboard.selectedOrder ? displayPhone(dashboard.selectedOrder, true) : "尚未选择号码",
+      note: dashboard.selectedOrder
+        ? displayPhone(dashboard.selectedOrder, dashboard.privacyMasked)
+        : "尚未选择号码",
       icon: Inbox,
       tone: "text-amber-600",
     },
@@ -374,11 +383,13 @@ function AccountRail({ dashboard }: { dashboard: DashboardController }) {
                     </Avatar>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-medium">{group.accountLabel}</span>
+                        <span className="truncate text-sm font-medium">
+                          {displayIdentifier(group.accountLabel, dashboard.privacyMasked)}
+                        </span>
                         <span className="size-1.5 rounded-full bg-emerald-500" />
                       </span>
                       <span className="mt-1 block truncate font-mono text-xs font-normal text-muted-foreground">
-                        {displayPhone(firstOrder, true)}
+                        {displayPhone(firstOrder, dashboard.privacyMasked)}
                       </span>
                       <span className="mt-1 flex items-center justify-between text-xs font-normal text-muted-foreground">
                         <span>账户 {index + 1}</span>
@@ -403,7 +414,9 @@ function AccountRail({ dashboard }: { dashboard: DashboardController }) {
                 <div className="flex items-start gap-2 text-xs text-destructive">
                   <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
                   <div className="min-w-0">
-                    <div className="truncate font-medium">{warning.accountLabel}</div>
+                    <div className="truncate font-medium">
+                      {displayIdentifier(warning.accountLabel, dashboard.privacyMasked)}
+                    </div>
                     <div className="mt-1 text-xs leading-5 text-muted-foreground">{warning.message}</div>
                   </div>
                 </div>
@@ -555,7 +568,8 @@ function NumberTable({ dashboard }: { dashboard: DashboardController }) {
                               {displayPhone(order, dashboard.privacyMasked)}
                             </span>
                             <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
-                              {order.countryCode || "未知地区"} · {order.accountLabel || "默认账户"}
+                              {order.countryCode || "未知地区"} ·{" "}
+                              {displayIdentifier(order.accountLabel || "默认账户", dashboard.privacyMasked)}
                             </span>
                           </span>
                         </Button>
@@ -600,12 +614,12 @@ function CodePanel({ dashboard }: { dashboard: DashboardController }) {
   const order = dashboard.selectedOrder
   const record = firstCodeRecord(dashboard.messages)
   const code = record?.code || ""
-  const canCopy = dashboard.revealCode && isCodeRevealed(code)
+  const canCopy = !dashboard.privacyMasked && dashboard.revealCode && isCodeRevealed(code)
   const displayCode = dashboard.loadingMessages
     ? ""
     : !code
       ? "— — —"
-      : dashboard.revealCode
+      : !dashboard.privacyMasked && dashboard.revealCode
         ? code.length > 3
           ? `${code.slice(0, Math.ceil(code.length / 2))} ${code.slice(Math.ceil(code.length / 2))}`
           : code
@@ -616,11 +630,16 @@ function CodePanel({ dashboard }: { dashboard: DashboardController }) {
       <CardHeader className="border-b py-3">
         <CardTitle className="text-sm">最新验证码</CardTitle>
         <CardDescription className="text-xs">
-          {record ? `${record.message.sender || "未知发送方"} · ${formatShortTime(record.message.time)}` : "等待短信数据"}
+          {record
+            ? `${displayIdentifier(
+                record.message.sender || "未知发送方",
+                dashboard.privacyMasked,
+              )} · ${formatShortTime(record.message.time)}`
+            : "等待短信数据"}
         </CardDescription>
         <CardAction>
-          <Badge variant={dashboard.revealCode ? "default" : "secondary"}>
-            {dashboard.revealCode ? "完整显示" : "已保护"}
+          <Badge variant={dashboard.privacyMasked ? "secondary" : "default"}>
+            {dashboard.privacyMasked ? "已保护" : "全部可见"}
           </Badge>
         </CardAction>
       </CardHeader>
@@ -646,14 +665,14 @@ function CodePanel({ dashboard }: { dashboard: DashboardController }) {
                   <Button
                     variant="outline"
                     size="icon-sm"
-                    onClick={dashboard.toggleRevealCode}
+                    onClick={() => dashboard.setPrivacyMasked(!dashboard.privacyMasked)}
                     disabled={!record || dashboard.loadingMessages}
-                    aria-label={dashboard.revealCode ? "隐藏验证码" : "显示验证码"}
+                    aria-label={dashboard.privacyMasked ? "显示所有敏感信息" : "隐藏所有敏感信息"}
                   >
-                    {dashboard.revealCode ? <EyeOff /> : <Eye />}
+                    {dashboard.privacyMasked ? <Eye /> : <EyeOff />}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>{dashboard.revealCode ? "从 Blob 显示掩码验证码" : "从 Blob 显示完整验证码"}</TooltipContent>
+                <TooltipContent>{dashboard.privacyMasked ? "显示所有敏感信息" : "恢复全部隐私遮罩"}</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -682,7 +701,9 @@ function CodePanel({ dashboard }: { dashboard: DashboardController }) {
             </div>
             <div>
               <dt className="text-muted-foreground">所属账户</dt>
-              <dd className="mt-0.5 truncate font-medium">{order?.accountLabel || "—"}</dd>
+              <dd className="mt-0.5 truncate font-medium">
+                {displayIdentifier(order?.accountLabel || "—", dashboard.privacyMasked)}
+              </dd>
             </div>
             <div>
               <dt className="text-muted-foreground">国家 / 区号</dt>
@@ -704,8 +725,13 @@ function CodePanel({ dashboard }: { dashboard: DashboardController }) {
           <Clock3 className="size-3.5 shrink-0" />
           {dashboard.lastUpdatedAt ? `同步于 ${formatDateTime(dashboard.lastUpdatedAt)}` : "等待同步"}
         </span>
-        <Button variant="ghost" size="xs" onClick={() => dashboard.toggleShowSms(!dashboard.showSms)} disabled={!order}>
-          {dashboard.showSms ? "隐藏原文" : "查看原文"}
+        <Button
+          variant="ghost"
+          size="xs"
+          onClick={() => dashboard.setPrivacyMasked(!dashboard.privacyMasked)}
+          disabled={!order || dashboard.loadingMessages}
+        >
+          {dashboard.privacyMasked ? "显示全部" : "全部遮罩"}
         </Button>
       </CardFooter>
     </Card>
@@ -719,7 +745,7 @@ function MessageCode({
   code: string
   dashboard: DashboardController
 }) {
-  const revealed = dashboard.revealCode && isCodeRevealed(code)
+  const revealed = !dashboard.privacyMasked && dashboard.revealCode && isCodeRevealed(code)
   return (
     <div className="flex items-center gap-1">
       <Badge variant="outline" className="font-mono tracking-wider">
@@ -746,17 +772,19 @@ function MessageRow({
   dashboard: DashboardController
 }) {
   const sender = message.sender || "未知发送方"
+  const displaySender = displayIdentifier(sender, dashboard.privacyMasked)
+  const displayContent = displayMessageContent(message.content, dashboard.privacyMasked)
   return (
     <TableRow>
       <TableCell className="py-1.5 pl-3">
         <div className="flex items-center gap-2">
           <Avatar className="size-6">
             <AvatarFallback className="bg-muted text-[9px] font-semibold">
-              {Array.from(sender.trim()).slice(0, 2).join("").toUpperCase() || "—"}
+              {Array.from(displaySender.trim()).slice(0, 2).join("").toUpperCase() || "—"}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-0">
-            <div className="truncate text-xs font-medium">{sender}</div>
+            <div className="truncate text-xs font-medium">{displaySender}</div>
             <span className="text-[10px] text-muted-foreground">短信</span>
           </div>
         </div>
@@ -764,9 +792,9 @@ function MessageRow({
       <TableCell className="max-w-0 py-1.5">
         <Tooltip>
           <TooltipTrigger asChild>
-            <p className="truncate text-xs text-muted-foreground">{message.content || "无短信正文"}</p>
+            <p className="truncate text-xs text-muted-foreground">{displayContent}</p>
           </TooltipTrigger>
-          <TooltipContent className="max-w-sm leading-5">{message.content || "无短信正文"}</TooltipContent>
+          <TooltipContent className="max-w-sm leading-5">{displayContent}</TooltipContent>
         </Tooltip>
       </TableCell>
       <TableCell className="py-1.5">
@@ -791,16 +819,18 @@ function MessageCard({
   dashboard: DashboardController
 }) {
   const sender = message.sender || "未知发送方"
+  const displaySender = displayIdentifier(sender, dashboard.privacyMasked)
+  const displayContent = displayMessageContent(message.content, dashboard.privacyMasked)
   return (
     <article className="p-3">
       <div className="flex items-center gap-3">
         <Avatar className="size-9">
           <AvatarFallback className="bg-muted text-xs font-semibold">
-            {Array.from(sender.trim()).slice(0, 2).join("").toUpperCase() || "—"}
+            {Array.from(displaySender.trim()).slice(0, 2).join("").toUpperCase() || "—"}
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{sender}</div>
+          <div className="truncate text-sm font-medium">{displaySender}</div>
           <span className="text-xs text-muted-foreground">短信</span>
         </div>
         <time className="shrink-0 text-xs tabular-nums text-muted-foreground">
@@ -808,7 +838,7 @@ function MessageCard({
         </time>
       </div>
       <p className="mt-3 break-words whitespace-pre-wrap text-sm leading-6 text-foreground/80">
-        {message.content || "无短信正文"}
+        {displayContent}
       </p>
       <div className="mt-3 flex min-h-11 items-center justify-between gap-3">
         <span className="text-xs text-muted-foreground">验证码</span>
@@ -837,13 +867,13 @@ function MessageInbox({ dashboard }: { dashboard: DashboardController }) {
         </CardDescription>
         <CardAction>
           <div className="flex min-h-11 items-center gap-3 text-xs text-muted-foreground md:min-h-0 md:gap-2">
-            <span className="hidden sm:inline">显示原文</span>
+            <span className="hidden sm:inline">显示敏感信息</span>
             <Switch
               size="sm"
-              checked={dashboard.showSms}
-              onCheckedChange={dashboard.toggleShowSms}
+              checked={!dashboard.privacyMasked}
+              onCheckedChange={(visible) => dashboard.setPrivacyMasked(!visible)}
               disabled={!dashboard.selectedOrder || dashboard.loadingMessages}
-              aria-label="切换短信原文"
+              aria-label="切换所有敏感信息显示"
             />
           </div>
         </CardAction>
@@ -942,7 +972,9 @@ export function DashboardShell({ dashboard }: { dashboard: DashboardController }
               <AlertTriangle />
               <AlertTitle>{dashboard.warnings.length} 个账户读取失败</AlertTitle>
               <AlertDescription className="text-xs text-amber-800">
-                {dashboard.warnings.map((warning) => warning.accountLabel).join("、")}；其他账户已继续同步。
+                {dashboard.warnings
+                  .map((warning) => displayIdentifier(warning.accountLabel, dashboard.privacyMasked))
+                  .join("、")}；其他账户已继续同步。
               </AlertDescription>
             </Alert>
           )}

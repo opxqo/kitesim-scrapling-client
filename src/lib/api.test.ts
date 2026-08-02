@@ -52,4 +52,14 @@ describe("dashboard cache request intent", () => {
     expect(normalBody.refresh).toBe(false)
     expect(refreshBody.refresh).toBe(true)
   })
+
+  it("requests only fully masked or fully visible message variants", async () => {
+    await getMessages("dashboard-test-key", order, { revealCode: false, showSms: false })
+    await getMessages("dashboard-test-key", order, { revealCode: true, showSms: true })
+
+    const maskedBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    const visibleBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body))
+    expect(maskedBody).toMatchObject({ revealCode: false, showSms: false, refresh: false })
+    expect(visibleBody).toMatchObject({ revealCode: true, showSms: true, refresh: false })
+  })
 })

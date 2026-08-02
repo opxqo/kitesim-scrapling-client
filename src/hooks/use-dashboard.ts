@@ -6,6 +6,7 @@ import {
   firstCodeRecord,
   isCodeRevealed,
   orderKey,
+  privacyMessageOptions,
   statusCountsFromOrders,
 } from "@/lib/dashboard"
 import type {
@@ -87,7 +88,7 @@ export function useDashboard() {
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({})
   const [revealCode, setRevealCode] = useState(false)
   const [showSms, setShowSms] = useState(false)
-  const [privacyMasked, setPrivacyMasked] = useState(true)
+  const [privacyMasked, setPrivacyMaskedState] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [loadingOrders, setLoadingOrders] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
@@ -106,6 +107,7 @@ export function useDashboard() {
   const selectedKeyRef = useRef("")
   const revealCodeRef = useRef(false)
   const showSmsRef = useRef(false)
+  const privacyMaskedRef = useRef(true)
   const orderSequence = useRef(0)
   const messageSequence = useRef(0)
 
@@ -140,7 +142,8 @@ export function useDashboard() {
     revealCodeRef.current = false
     setShowSms(false)
     showSmsRef.current = false
-    setPrivacyMasked(true)
+    setPrivacyMaskedState(true)
+    privacyMaskedRef.current = true
     setSearchQuery("")
     setLastUpdatedAt("")
     setLoadingOrders(false)
@@ -212,6 +215,12 @@ export function useDashboard() {
         if (!Array.isArray(payload.items)) {
           throw new ApiError("短信接口返回格式无效", 502, "server")
         }
+        if (
+          Boolean(payload.revealCode) !== nextRevealCode
+          || Boolean(payload.showSms) !== nextShowSms
+        ) {
+          throw new ApiError("短信接口返回的隐私状态不一致", 502, "server")
+        }
         const items = payload.items
         const cacheStatus = normalizeCacheStatus(payload.cacheStatus)
         setMessages(items)
@@ -220,6 +229,9 @@ export function useDashboard() {
         revealCodeRef.current = Boolean(payload.revealCode)
         setShowSms(Boolean(payload.showSms))
         showSmsRef.current = Boolean(payload.showSms)
+        const nextPrivacyMasked = !payload.revealCode
+        setPrivacyMaskedState(nextPrivacyMasked)
+        privacyMaskedRef.current = nextPrivacyMasked
         setMessageCounts((current) => ({ ...current, [orderKey(order)]: items.length }))
         if (payload.updatedAt) setLastUpdatedAt(payload.updatedAt)
 
@@ -259,6 +271,12 @@ export function useDashboard() {
         if (sequence !== messageSequence.current) return null
         setMessages([])
         setMessageCacheStatus(null)
+        setRevealCode(false)
+        revealCodeRef.current = false
+        setShowSms(false)
+        showSmsRef.current = false
+        setPrivacyMaskedState(true)
+        privacyMaskedRef.current = true
         handleRequestError(error, "短信")
         return null
       } finally {
@@ -277,14 +295,15 @@ export function useDashboard() {
       if (!accessKey) return false
       const sequence = ++orderSequence.current
       const refresh = options.refresh === true
+      const privacyOptions = privacyMessageOptions(privacyMaskedRef.current)
       messageSequence.current += 1
       setLoadingOrders(true)
       setMessages([])
       setMessageCacheStatus(null)
-      setRevealCode(false)
-      revealCodeRef.current = false
-      setShowSms(false)
-      showSmsRef.current = false
+      setRevealCode(privacyOptions.revealCode)
+      revealCodeRef.current = privacyOptions.revealCode
+      setShowSms(privacyOptions.showSms)
+      showSmsRef.current = privacyOptions.showSms
       setConnection({
         mode: "loading",
         text: refresh ? "正在从 Kitesim 刷新号码" : "正在读取 Blob 号码",
@@ -362,8 +381,7 @@ export function useDashboard() {
       if (orderToLoad) {
         messagesStatus = await fetchMessages(orderToLoad, {
           key: accessKey,
-          revealCode: false,
-          showSms: false,
+          ...privacyOptions,
           refresh,
           quiet: true,
           warningCount: currentWarnings.length,
@@ -475,6 +493,23 @@ export function useDashboard() {
     [fetchOrders, loadingMessages, loadingOrders],
   )
 
+  const setPrivacyMasked = useCallback(
+    (nextMasked: boolean) => {
+      if (loadingOrders || loadingMessages) return
+      const privacyOptions = privacyMessageOptions(nextMasked)
+      setPrivacyMaskedState(nextMasked)
+      privacyMaskedRef.current = nextMasked
+      setRevealCode(privacyOptions.revealCode)
+      revealCodeRef.current = privacyOptions.revealCode
+      setShowSms(privacyOptions.showSms)
+      showSmsRef.current = privacyOptions.showSms
+      if (selectedOrder) {
+        void fetchMessages(selectedOrder, { ...privacyOptions, refresh: false })
+      }
+    },
+    [fetchMessages, loadingMessages, loadingOrders, selectedOrder],
+  )
+
   const selectOrder = useCallback(
     (nextKey: string) => {
       if (nextKey === selectedKeyRef.current || loadingOrders || loadingMessages) return
@@ -484,27 +519,14 @@ export function useDashboard() {
       setSelectedKey(nextKey)
       setMessages([])
       setMessageCacheStatus(null)
-      setRevealCode(false)
-      revealCodeRef.current = false
-      setShowSms(false)
-      showSmsRef.current = false
-      void fetchMessages(order, { revealCode: false, showSms: false, refresh: false })
+      const privacyOptions = privacyMessageOptions(privacyMaskedRef.current)
+      setRevealCode(privacyOptions.revealCode)
+      revealCodeRef.current = privacyOptions.revealCode
+      setShowSms(privacyOptions.showSms)
+      showSmsRef.current = privacyOptions.showSms
+      void fetchMessages(order, { ...privacyOptions, refresh: false })
     },
     [fetchMessages, loadingMessages, loadingOrders, orders],
-  )
-
-  const toggleRevealCode = useCallback(() => {
-    if (!selectedOrder || loadingMessages) return
-    void fetchMessages(selectedOrder, { revealCode: !revealCodeRef.current, refresh: false })
-  }, [fetchMessages, loadingMessages, selectedOrder])
-
-  const toggleShowSms = useCallback(
-    (nextValue: boolean) => {
-      if (selectedOrder && !loadingMessages) {
-        void fetchMessages(selectedOrder, { showSms: nextValue, refresh: false })
-      }
-    },
-    [fetchMessages, loadingMessages, selectedOrder],
   )
 
   const refresh = useCallback(async (options: { quiet?: boolean } = {}) => {
@@ -546,8 +568,8 @@ export function useDashboard() {
 
   const copyLatestCode = useCallback(() => {
     const code = firstCodeRecord(messages)?.code || ""
-    if (isCodeRevealed(code)) void copyValue(code, "验证码")
-  }, [copyValue, messages])
+    if (!privacyMasked && isCodeRevealed(code)) void copyValue(code, "验证码")
+  }, [copyValue, messages, privacyMasked])
 
   return {
     health,
@@ -586,8 +608,6 @@ export function useDashboard() {
     changeAutoRefreshSeconds,
     changeStatus,
     selectOrder,
-    toggleRevealCode,
-    toggleShowSms,
     copyValue,
     copyLatestCode,
   }
