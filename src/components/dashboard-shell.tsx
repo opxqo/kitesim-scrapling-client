@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react"
 import {
   AlertTriangle,
-  ChevronLeft,
-  ChevronRight,
   Clock3,
   Copy,
   DatabaseZap,
@@ -19,25 +17,73 @@ import {
   ShieldCheck,
   Smartphone,
   UserRoundCheck,
-  X,
 } from "lucide-react"
-import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { AppMark } from "@/components/app-mark"
 import { TokenManager } from "@/components/token-manager"
+import { Alert, AlertTitle } from "@/components/ui/alert"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group"
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item"
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { DashboardController } from "@/hooks/use-dashboard"
 import {
@@ -72,15 +118,8 @@ const CACHE_STATUS_LABEL: Record<CacheStatus, string> = {
   bypass: "写入失败",
 }
 
-const STATUS_TONE: Record<string, string> = {
-  使用中: "text-emerald-700 bg-emerald-500/10",
-  激活中: "text-indigo-700 bg-indigo-500/10",
-  待支付: "text-amber-700 bg-amber-500/10",
-  已过期: "text-slate-500 bg-slate-500/10",
-  已退款: "text-slate-500 bg-slate-500/10",
-}
-
 type MobilePanel = "numbers" | "code" | "messages"
+type BadgeVariant = "default" | "secondary" | "destructive" | "outline"
 
 function displayPhone(order: KitesimOrder, masked: boolean) {
   return displaySensitiveIdentifier(order.phoneNumber, masked)
@@ -90,11 +129,17 @@ function displayIdentifier(value: string, masked: boolean) {
   return displaySensitiveIdentifier(value, masked)
 }
 
-function statusTone(mode: DashboardController["connection"]["mode"]) {
-  if (mode === "error") return "bg-rose-500"
-  if (mode === "warning") return "bg-amber-500"
-  if (mode === "loading") return "animate-pulse bg-indigo-500"
-  return "bg-emerald-500"
+function connectionVariant(mode: DashboardController["connection"]["mode"]): BadgeVariant {
+  if (mode === "error") return "destructive"
+  if (mode === "ready") return "secondary"
+  return "outline"
+}
+
+function statusVariant(label: string): BadgeVariant {
+  if (label === "使用中") return "default"
+  if (label === "激活中" || label === "已退款") return "secondary"
+  if (label === "已过期") return "destructive"
+  return "outline"
 }
 
 function usePagedItems<T>(items: T[], pageSize: number, resetKey: string) {
@@ -116,7 +161,7 @@ function usePagedItems<T>(items: T[], pageSize: number, resetKey: string) {
   }
 }
 
-function Pager({
+function DataPagination({
   page,
   pageCount,
   onChange,
@@ -127,83 +172,72 @@ function Pager({
   onChange: (page: number) => void
   label: string
 }) {
+  const navigate = (event: React.MouseEvent<HTMLAnchorElement>, nextPage: number) => {
+    event.preventDefault()
+    if (nextPage >= 0 && nextPage < pageCount) onChange(nextPage)
+  }
+
   return (
-    <div className="flex h-8 items-center justify-between border-t border-white/70 px-3 text-[11px] text-muted-foreground">
-      <span>{label}</span>
-      <div className="flex items-center gap-1.5">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          className="soft-control"
-          onClick={() => onChange(page - 1)}
-          disabled={page === 0}
-          aria-label={`上一页${label}`}
-        >
-          <ChevronLeft />
-        </Button>
-        <span className="min-w-10 text-center font-mono tabular-nums">
-          {page + 1}/{pageCount}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          className="soft-control"
-          onClick={() => onChange(page + 1)}
-          disabled={page >= pageCount - 1}
-          aria-label={`下一页${label}`}
-        >
-          <ChevronRight />
-        </Button>
-      </div>
-    </div>
+    <Pagination>
+      <PaginationContent className="w-full justify-between">
+        <PaginationItem className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          {label}
+        </PaginationItem>
+        <PaginationItem>
+          <PaginationPrevious
+            href="#previous-page"
+            text=""
+            aria-disabled={page === 0}
+            tabIndex={page === 0 ? -1 : 0}
+            className={cn(page === 0 && "pointer-events-none opacity-50")}
+            onClick={(event) => navigate(event, page - 1)}
+          />
+        </PaginationItem>
+        <PaginationItem>
+          <PaginationLink href="#current-page" isActive size="sm" onClick={(event) => event.preventDefault()}>
+            {page + 1}/{pageCount}
+          </PaginationLink>
+        </PaginationItem>
+        <PaginationItem>
+          <PaginationNext
+            href="#next-page"
+            text=""
+            aria-disabled={page >= pageCount - 1}
+            tabIndex={page >= pageCount - 1 ? -1 : 0}
+            className={cn(page >= pageCount - 1 && "pointer-events-none opacity-50")}
+            onClick={(event) => navigate(event, page + 1)}
+          />
+        </PaginationItem>
+      </PaginationContent>
+    </Pagination>
   )
 }
 
 function AccountLoginDialog({ dashboard }: { dashboard: DashboardController }) {
   return (
-    <DialogPrimitive.Root>
+    <Dialog>
       <Tooltip>
         <TooltipTrigger asChild>
-          <DialogPrimitive.Trigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="soft-control gap-2 px-2.5"
-              aria-label="管理 Kitesim 账户登录"
-            >
-              <UserRoundCheck />
+          <DialogTrigger asChild>
+            <Button variant="outline" size="sm" aria-label="管理 Kitesim 账户登录">
+              <UserRoundCheck data-icon="inline-start" />
               <span className="hidden xl:inline">账户登录</span>
-              <span className="font-mono text-[10px] text-muted-foreground">
+              <Badge variant="secondary">
                 {Math.max(0, dashboard.accountCount - dashboard.failedAccountCount)}/{dashboard.accountCount}
-              </span>
+              </Badge>
             </Button>
-          </DialogPrimitive.Trigger>
+          </DialogTrigger>
         </TooltipTrigger>
         <TooltipContent>管理 Kitesim 登录与图片验证码</TooltipContent>
       </Tooltip>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-slate-900/22 backdrop-blur-[3px] data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out data-[state=open]:fade-in" />
-        <DialogPrimitive.Content className="neumorph-dialog fixed top-1/2 left-1/2 z-50 w-[min(760px,calc(100vw-24px))] max-h-[calc(100dvh-24px)] -translate-x-1/2 -translate-y-1/2 overflow-hidden p-2 outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
-          <DialogPrimitive.Title className="sr-only">Kitesim 账户登录</DialogPrimitive.Title>
-          <DialogPrimitive.Description className="sr-only">
-            管理账户验证码登录，Token 只保存在服务端。
-          </DialogPrimitive.Description>
-          <DialogPrimitive.Close asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="soft-control absolute top-4 right-4 z-10"
-              aria-label="关闭账户登录弹窗"
-            >
-              <X />
-            </Button>
-          </DialogPrimitive.Close>
-          <TokenManager dashboard={dashboard} />
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+      <DialogContent className="w-[calc(100%-1rem)] gap-3 p-3 sm:max-w-3xl">
+        <DialogHeader className="pr-8">
+          <DialogTitle>Kitesim 账户登录</DialogTitle>
+          <DialogDescription>管理员识别图片验证码后完成登录，Token 仅加密保存在服务端。</DialogDescription>
+        </DialogHeader>
+        <TokenManager dashboard={dashboard} />
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -219,50 +253,47 @@ function MessageDetailDialog({
   if (!message) return null
   const sender = displayIdentifier(message.sender || "未知发送方", dashboard.privacyMasked)
   const content = displayMessageContent(message.content, dashboard.privacyMasked)
+
   return (
-    <DialogPrimitive.Root open onOpenChange={(open) => !open && onClose()}>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-slate-900/22 backdrop-blur-[3px]" />
-        <DialogPrimitive.Content className="neumorph-dialog fixed top-1/2 left-1/2 z-50 w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden p-6 outline-none">
-          <div className="flex items-start gap-3 pr-10">
-            <div className="signal-puck grid size-11 shrink-0 place-items-center rounded-2xl text-indigo-600">
-              <MessageSquareText className="size-5" />
-            </div>
-            <div className="min-w-0">
-              <DialogPrimitive.Title className="truncate text-base font-semibold">{sender}</DialogPrimitive.Title>
-              <DialogPrimitive.Description className="mt-1 text-xs text-muted-foreground">
-                {formatDateTime(message.time)} · 完整短信详情
-              </DialogPrimitive.Description>
-            </div>
-          </div>
-          <DialogPrimitive.Close asChild>
-            <Button variant="ghost" size="icon-sm" className="soft-control absolute top-4 right-4" aria-label="关闭短信详情">
-              <X />
-            </Button>
-          </DialogPrimitive.Close>
-          <div className="soft-inset mt-5 rounded-2xl p-4">
-            <p className="break-words whitespace-pre-wrap text-sm leading-6 text-slate-700">{content}</p>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <span className="mr-auto text-xs text-muted-foreground">识别到的验证码</span>
-            {message.code.length ? message.code.map((code, index) => (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{sender}</DialogTitle>
+          <DialogDescription>{formatDateTime(message.time)} · 完整短信详情</DialogDescription>
+        </DialogHeader>
+        <Item variant="muted">
+          <ItemMedia variant="icon">
+            <MessageSquareText />
+          </ItemMedia>
+          <ItemContent>
+            <ItemDescription className="line-clamp-none break-words whitespace-pre-wrap text-foreground">
+              {content}
+            </ItemDescription>
+          </ItemContent>
+        </Item>
+        <Item size="sm">
+          <ItemContent>
+            <ItemTitle>识别到的验证码</ItemTitle>
+            <ItemDescription>{message.code.length ? `${message.code.length} 个结果` : "未识别"}</ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            {message.code.map((code, index) => (
               <Button
                 key={`${code}-${index}`}
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="sm"
-                className="soft-control font-mono tracking-wider"
                 disabled={dashboard.privacyMasked || !isCodeRevealed(code)}
                 onClick={() => dashboard.copyValue(code, "验证码")}
               >
                 {dashboard.privacyMasked ? "••••••" : code}
-                <Copy />
+                <Copy data-icon="inline-end" />
               </Button>
-            )) : <span className="text-xs text-muted-foreground">未识别</span>}
-          </div>
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+            ))}
+          </ItemActions>
+        </Item>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -273,15 +304,17 @@ function AutoRefreshSelect({ dashboard }: { dashboard: DashboardController }) {
       onValueChange={(value) => dashboard.changeAutoRefreshSeconds(Number(value))}
       disabled={dashboard.loadingOrders || dashboard.loadingMessages}
     >
-      <SelectTrigger size="sm" className="soft-control hidden min-w-[118px] border-0 bg-transparent shadow-none sm:flex" aria-label="定时刷新周期">
-        <Clock3 className="text-muted-foreground" />
+      <SelectTrigger size="sm" className="hidden min-w-[118px] sm:flex" aria-label="定时刷新周期">
+        <Clock3 />
         <SelectValue />
       </SelectTrigger>
       <SelectContent align="end">
-        <SelectItem value="0">手动刷新</SelectItem>
-        <SelectItem value="30">每 30 秒</SelectItem>
-        <SelectItem value="60">每分钟</SelectItem>
-        <SelectItem value="300">每 5 分钟</SelectItem>
+        <SelectGroup>
+          <SelectItem value="0">手动刷新</SelectItem>
+          <SelectItem value="30">每 30 秒</SelectItem>
+          <SelectItem value="60">每分钟</SelectItem>
+          <SelectItem value="300">每 5 分钟</SelectItem>
+        </SelectGroup>
       </SelectContent>
     </Select>
   )
@@ -289,52 +322,67 @@ function AutoRefreshSelect({ dashboard }: { dashboard: DashboardController }) {
 
 function WorkspaceHeader({ dashboard }: { dashboard: DashboardController }) {
   const busy = dashboard.loadingOrders || dashboard.loadingMessages
+  const connectionIcon = dashboard.connection.mode === "loading"
+    ? <Spinner />
+    : dashboard.connection.mode === "error" || dashboard.connection.mode === "warning"
+      ? <AlertTriangle data-icon="inline-start" />
+      : <ShieldCheck data-icon="inline-start" />
+
   return (
-    <header className="flex h-14 shrink-0 items-center border-b border-white/70 bg-[#eef2f8]/90 px-3 backdrop-blur-xl md:px-4">
+    <header className="flex h-14 shrink-0 items-center border-b bg-background px-3 md:px-4">
       <div className="flex min-w-0 items-center gap-3">
         <AppMark />
         <div className="min-w-0 leading-none">
-          <div className="truncate text-sm font-semibold tracking-tight text-slate-900">Kitesim Relay</div>
-          <span className="mt-1 hidden text-[10px] font-medium tracking-[0.14em] text-slate-500 uppercase sm:block">
-            Signal operations desk
-          </span>
+          <div className="truncate text-sm font-semibold tracking-tight">Kitesim Relay</div>
+          <span className="mt-1 hidden text-[10px] text-muted-foreground sm:block">多账户号码与验证码工作台</span>
         </div>
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <div className="soft-inset hidden h-8 items-center gap-2 rounded-xl px-3 text-xs text-slate-600 md:flex">
-          <span className={cn("size-2 rounded-full", statusTone(dashboard.connection.mode))} />
-          <span>{dashboard.connection.text}</span>
-        </div>
+        <Badge variant={connectionVariant(dashboard.connection.mode)} className="hidden font-normal md:inline-flex">
+          {connectionIcon}
+          {dashboard.connection.text}
+        </Badge>
         <AutoRefreshSelect dashboard={dashboard} />
         <AccountLoginDialog dashboard={dashboard} />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              variant="ghost"
+              variant="outline"
               size="icon-sm"
-              className="soft-control"
               onClick={() => dashboard.setPrivacyMasked(!dashboard.privacyMasked)}
               disabled={busy}
               aria-label={dashboard.privacyMasked ? "显示敏感信息" : "隐藏敏感信息"}
             >
-              {dashboard.privacyMasked ? <EyeOff /> : <Eye />}
+              {dashboard.privacyMasked ? <EyeOff data-icon="inline-start" /> : <Eye data-icon="inline-start" />}
             </Button>
           </TooltipTrigger>
           <TooltipContent>{dashboard.privacyMasked ? "显示敏感信息" : "恢复隐私遮罩"}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" className="soft-control" onClick={() => dashboard.refresh()} disabled={busy} aria-label="刷新全部账户">
-              <RefreshCw className={cn(busy && "animate-spin")} />
+            <Button
+              variant="outline"
+              size="icon-sm"
+              onClick={() => dashboard.refresh()}
+              disabled={busy}
+              aria-label="刷新全部账户"
+            >
+              {busy ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
             </Button>
           </TooltipTrigger>
           <TooltipContent>从 Kitesim 刷新并回写 Blob</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" className="soft-control hidden sm:inline-flex" onClick={() => dashboard.lock()} aria-label="锁定工作台">
-              <LockKeyhole />
+            <Button
+              variant="outline"
+              size="icon-sm"
+              className="hidden sm:inline-flex"
+              onClick={() => dashboard.lock()}
+              aria-label="锁定工作台"
+            >
+              <LockKeyhole data-icon="inline-start" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>锁定工作台</TooltipContent>
@@ -352,43 +400,43 @@ function CommandStrip({ dashboard }: { dashboard: DashboardController }) {
   const metrics = [
     { label: "账户", value: `${successfulAccounts}/${dashboard.accountCount}`, icon: Server },
     { label: "号码", value: String(dashboard.orders.length), icon: Smartphone },
-    { label: "当前短信", value: String(dashboard.messageTotalCount), icon: Inbox },
+    { label: "短信", value: String(dashboard.messageTotalCount), icon: Inbox },
   ]
 
   return (
-    <section className="soft-panel flex min-h-0 items-center gap-3 overflow-hidden rounded-2xl px-3 py-2 md:px-4">
-      <div className="hidden min-w-0 flex-1 items-center gap-3 md:flex">
-        <div className="signal-puck grid size-9 shrink-0 place-items-center rounded-xl text-indigo-600">
-          <DatabaseZap className="size-4" />
+    <Item variant="outline" size="sm" className="h-full w-full min-w-0 flex-nowrap bg-card">
+      <ItemMedia variant="icon" className="hidden md:flex">
+        <DatabaseZap />
+      </ItemMedia>
+      <ItemContent className="hidden min-w-0 md:flex">
+        <ItemTitle>
+          信号总控台
+          <Badge variant="outline">{cacheLabel}</Badge>
+        </ItemTitle>
+        <ItemDescription>
+          {dashboard.lastUpdatedAt ? `同步于 ${formatDateTime(dashboard.lastUpdatedAt)}` : "普通读取仅访问 Blob 快照"}
+        </ItemDescription>
+      </ItemContent>
+      <ItemActions className="w-full min-w-0 md:w-auto">
+        <div className="grid w-full min-w-0 grid-cols-3 gap-2">
+          {metrics.map(({ label, value, icon: Icon }) => (
+            <Item key={label} variant="muted" size="xs" className="min-w-0 flex-nowrap">
+              <ItemMedia variant="icon" className="hidden sm:flex">
+                <Icon />
+              </ItemMedia>
+              <ItemContent className="min-w-0">
+                <ItemTitle className="font-mono tabular-nums">{value}</ItemTitle>
+                <ItemDescription className="truncate text-[10px]">{label}</ItemDescription>
+              </ItemContent>
+            </Item>
+          ))}
         </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h1 className="text-sm font-semibold text-slate-900">信号总控台</h1>
-            <Badge variant="outline" className="h-5 border-0 bg-white/60 px-1.5 text-[10px] font-normal text-slate-500">
-              {cacheLabel}
-            </Badge>
-          </div>
-          <p className="mt-0.5 truncate text-[11px] text-slate-500">
-            {dashboard.lastUpdatedAt ? `同步于 ${formatDateTime(dashboard.lastUpdatedAt)}` : "普通读取仅访问 Blob 快照"}
-          </p>
-        </div>
-      </div>
-      <div className="grid w-full grid-cols-3 gap-2 md:w-auto md:min-w-[390px]">
-        {metrics.map(({ label, value, icon: Icon }) => (
-          <div key={label} className="soft-inset flex h-11 items-center gap-2 rounded-xl px-2.5 md:min-w-[120px]">
-            <Icon className="size-3.5 shrink-0 text-indigo-500" />
-            <div className="min-w-0">
-              <div className="font-mono text-sm font-semibold leading-none text-slate-800 tabular-nums">{value}</div>
-              <div className="mt-1 truncate text-[9px] font-medium tracking-wider text-slate-500 uppercase">{label}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="hidden items-center gap-1.5 text-[11px] text-slate-500 xl:flex">
-        <ShieldCheck className="size-3.5 text-emerald-600" />
+      </ItemActions>
+      <Badge variant="secondary" className="hidden xl:inline-flex">
+        <ShieldCheck data-icon="inline-start" />
         凭据仅服务端可见
-      </div>
-    </section>
+      </Badge>
+    </Item>
   )
 }
 
@@ -398,94 +446,108 @@ function AccountRail({ dashboard }: { dashboard: DashboardController }) {
   const selectedAccountId = dashboard.selectedOrder?.accountId
 
   return (
-    <section className="soft-panel flex h-full min-h-0 flex-col overflow-hidden rounded-2xl">
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-white/70 px-3">
-        <div>
-          <h2 className="text-xs font-semibold text-slate-800">账户路由</h2>
-          <p className="mt-1 text-[10px] text-slate-500">按登录账户隔离</p>
-        </div>
-        <span className="font-mono text-xs text-slate-500">{groups.length}</span>
-      </div>
-      <div className="min-h-0 flex-1 p-2">
+    <Card size="sm" className="h-full min-h-0 min-w-0 gap-0 py-0">
+      <CardHeader className="shrink-0 border-b py-3">
+        <CardTitle>账户路由</CardTitle>
+        <CardDescription className="text-xs">按登录账户隔离</CardDescription>
+        <CardAction>
+          <Badge variant="secondary">{groups.length}</Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="min-h-0 flex-1 p-2">
         {dashboard.loadingOrders && !groups.length ? (
-          <div className="space-y-2">
-            {[0, 1, 2].map((item) => <Skeleton key={item} className="h-16 w-full rounded-xl" />)}
+          <div className="flex flex-col gap-2">
+            {[0, 1, 2].map((item) => <Skeleton key={item} className="h-14 w-full" />)}
           </div>
-        ) : pager.items.length ? pager.items.map((group, index) => {
-          const firstOrder = group.orders[0]
-          const selected = selectedAccountId === group.accountId
-          return (
-            <button
-              key={group.accountId}
-              type="button"
-              className={cn(
-                "mb-1.5 flex h-[66px] w-full items-center gap-2.5 rounded-xl px-2.5 text-left transition",
-                selected ? "signal-puck text-slate-900" : "hover:bg-white/45",
-              )}
-              onClick={() => dashboard.selectOrder(orderKey(firstOrder))}
-            >
-              <Avatar className="size-8 rounded-xl">
-                <AvatarFallback className="rounded-xl bg-indigo-500/10 text-[10px] font-semibold text-indigo-700">
-                  {String(pager.page * 6 + index + 1).padStart(2, "0")}
-                </AvatarFallback>
-              </Avatar>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-medium">
-                  {displayIdentifier(group.accountLabel, dashboard.privacyMasked)}
-                </span>
-                <span className="mt-1 block truncate font-mono text-[10px] text-slate-500">
-                  {displayPhone(firstOrder, dashboard.privacyMasked)}
-                </span>
-                <span className="mt-1 flex items-center gap-1 text-[9px] text-slate-400">
-                  <span className="size-1.5 rounded-full bg-emerald-500" />
-                  {group.orders.length} 个号码
-                </span>
-              </span>
-            </button>
-          )
-        }) : (
-          <div className="grid h-full place-items-center px-3 text-center text-[11px] leading-5 text-slate-500">
-            {dashboard.ordersCacheStatus === "empty" ? "Blob 暂无号码快照\n请点击刷新" : "当前筛选没有号码"}
-          </div>
+        ) : pager.items.length ? (
+          <ItemGroup className="gap-1">
+            {pager.items.map((group, index) => {
+              const firstOrder = group.orders[0]
+              const selected = selectedAccountId === group.accountId
+              return (
+                <Item key={group.accountId} variant={selected ? "muted" : "default"} size="xs" className="flex-nowrap">
+                  <ItemMedia>
+                    <Avatar>
+                      <AvatarFallback>{String(pager.page * 6 + index + 1).padStart(2, "0")}</AvatarFallback>
+                    </Avatar>
+                  </ItemMedia>
+                  <ItemContent className="min-w-0">
+                    <ItemTitle className="max-w-full truncate text-xs">
+                      {displayIdentifier(group.accountLabel, dashboard.privacyMasked)}
+                    </ItemTitle>
+                    <ItemDescription className="truncate font-mono text-[10px]">
+                      {displayPhone(firstOrder, dashboard.privacyMasked)} · {group.orders.length} 个号码
+                    </ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <Button
+                      type="button"
+                      variant={selected ? "secondary" : "ghost"}
+                      size="icon-sm"
+                      onClick={() => dashboard.selectOrder(orderKey(firstOrder))}
+                      aria-label={`选择账户 ${group.accountLabel}`}
+                    >
+                      <Phone data-icon="inline-start" />
+                    </Button>
+                  </ItemActions>
+                </Item>
+              )
+            })}
+          </ItemGroup>
+        ) : (
+          <Empty className="h-full p-3">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><Server /></EmptyMedia>
+              <EmptyTitle>没有账户数据</EmptyTitle>
+              <EmptyDescription>
+                {dashboard.ordersCacheStatus === "empty" ? "Blob 暂无号码快照，请点击刷新" : "当前筛选没有号码"}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
-      </div>
+      </CardContent>
       {dashboard.warnings.length > 0 && (
-        <div className="mx-2 mb-2 flex items-center gap-2 rounded-xl bg-amber-500/10 px-2.5 py-2 text-[10px] text-amber-800">
-          <AlertTriangle className="size-3.5 shrink-0" />
-          {dashboard.warnings.length} 个账户读取失败
-        </div>
+        <Alert variant="destructive" className="mx-2 mb-2 w-auto">
+          <AlertTriangle />
+          <AlertTitle>{dashboard.warnings.length} 个账户读取失败</AlertTitle>
+        </Alert>
       )}
-      <Pager page={pager.page} pageCount={pager.pageCount} onChange={pager.setPage} label="账户" />
-    </section>
+      <CardFooter className="shrink-0 p-2">
+        <DataPagination page={pager.page} pageCount={pager.pageCount} onChange={pager.setPage} label="账户" />
+      </CardFooter>
+    </Card>
   )
 }
 
 function StatusFilters({ dashboard }: { dashboard: DashboardController }) {
   return (
-    <div className="grid grid-cols-6 gap-1.5">
+    <ToggleGroup
+      type="single"
+      value={dashboard.status}
+      variant="outline"
+      size="sm"
+      spacing={1}
+      className="w-full min-w-0"
+      onValueChange={(value) => value && dashboard.changeStatus(value as DashboardStatus)}
+      aria-label="号码状态筛选"
+    >
       {STATUS_ITEMS.map((item) => {
         const count = item.value === dashboard.status ? dashboard.orders.length : dashboard.statusCounts[item.value]
         const disabled = item.value === "all" && dashboard.accountCount > 8
         return (
-          <button
+          <ToggleGroupItem
             key={item.value}
-            type="button"
-            className={cn(
-              "h-9 min-w-0 rounded-xl px-1 text-[10px] font-medium transition",
-              dashboard.status === item.value
-                ? "signal-puck text-indigo-700"
-                : "soft-inset text-slate-500 hover:text-slate-800",
-            )}
+            value={item.value}
             disabled={disabled || dashboard.loadingOrders || dashboard.loadingMessages}
-            onClick={() => dashboard.changeStatus(item.value)}
             title={disabled ? "账户超过 8 个时不能查询全部状态" : item.label}
+            className="min-w-0 flex-1 basis-0 [flex-shrink:1]"
           >
-            <span className="block truncate">{item.label}</span>
-            <span className="font-mono text-[9px] tabular-nums">{count ?? "—"}</span>
-          </button>
+            <span className="truncate">{item.label}</span>
+            <span className="hidden font-mono text-[9px] tabular-nums sm:inline">{count ?? "—"}</span>
+          </ToggleGroupItem>
         )
       })}
-    </div>
+    </ToggleGroup>
   )
 }
 
@@ -500,81 +562,97 @@ function NumberWorkspace({
 }) {
   const resetKey = `${dashboard.status}:${dashboard.searchQuery}:${dashboard.filteredOrders.length}`
   const pager = usePagedItems(dashboard.filteredOrders, pageSize, resetKey)
+
   return (
-    <section className="soft-panel flex h-full min-h-0 flex-col overflow-hidden rounded-2xl">
-      <div className="flex min-h-14 shrink-0 items-center gap-3 border-b border-white/70 px-3">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-slate-900">号码信号</h2>
-          <p className="mt-0.5 truncate text-[10px] text-slate-500">选择号码后在右侧读取完整短信</p>
-        </div>
-        <div className="relative w-[min(42%,220px)]">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-slate-400" />
-          <Input
-            className="soft-inset h-8 border-0 bg-transparent pr-2 pl-8 text-xs shadow-none md:h-8 md:pr-2 md:pl-8"
-            placeholder="搜索号码"
-            value={dashboard.searchQuery}
-            onChange={(event) => dashboard.setSearchQuery(event.target.value)}
-            aria-label="搜索号码或账户"
-          />
-        </div>
-      </div>
-      <div className="shrink-0 px-3 py-2">
+    <Card size="sm" className="h-full min-h-0 min-w-0 gap-0 py-0">
+      <CardHeader className="min-w-0 shrink-0 border-b py-3">
+        <CardTitle>号码信号</CardTitle>
+        <CardDescription className="hidden text-xs sm:block">选择号码后读取完整短信</CardDescription>
+        <CardAction>
+          <InputGroup className="w-[150px] max-w-[46vw] sm:w-[210px] sm:max-w-none">
+            <InputGroupAddon><Search /></InputGroupAddon>
+            <InputGroupInput
+              placeholder="搜索号码或账户"
+              value={dashboard.searchQuery}
+              onChange={(event) => dashboard.setSearchQuery(event.target.value)}
+              aria-label="搜索号码或账户"
+            />
+          </InputGroup>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 px-2 py-2">
         <StatusFilters dashboard={dashboard} />
-      </div>
-      <div className="min-h-0 flex-1 border-t border-white/70 px-2 py-1.5">
-        {dashboard.loadingOrders && !dashboard.filteredOrders.length ? (
-          <div className="space-y-1.5">
-            {Array.from({ length: Math.min(pageSize, 5) }, (_, index) => <Skeleton key={index} className="h-[54px] w-full rounded-xl" />)}
-          </div>
-        ) : pager.items.length ? pager.items.map((order) => {
-          const key = orderKey(order)
-          const selected = dashboard.selectedKey === key
-          const count = dashboard.messageCounts[key]
-          const label = statusLabel(order)
-          return (
-            <button
-              key={key}
-              type="button"
-              className={cn(
-                "mb-1 grid h-[54px] w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-xl px-2.5 text-left transition",
-                selected ? "signal-puck" : "hover:bg-white/45",
-              )}
-              onClick={() => {
-                dashboard.selectOrder(key)
-                onSelect?.()
-              }}
-            >
-              <span className="flex min-w-0 items-center gap-2.5">
-                <span className={cn("grid size-8 shrink-0 place-items-center rounded-xl", selected ? "bg-indigo-500/10" : "soft-inset")}>
-                  <Phone className={cn("size-3.5", selected ? "text-indigo-600" : "text-slate-400")} />
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate font-mono text-xs font-semibold text-slate-800">
-                    {displayPhone(order, dashboard.privacyMasked)}
-                  </span>
-                  <span className="mt-1 block truncate text-[10px] text-slate-500">
-                    {order.countryCode || "未知地区"} · {displayIdentifier(order.accountLabel || "默认账户", dashboard.privacyMasked)} · {formatPackage(order)}
-                  </span>
-                </span>
-              </span>
-              <span className={cn("hidden rounded-lg px-2 py-1 text-[9px] font-medium sm:inline", STATUS_TONE[label] || "bg-slate-500/10 text-slate-500")}>{label}</span>
-              <span className="min-w-10 text-right font-mono text-[10px] text-slate-500">
-                {count === undefined ? "未读" : `${count} 条`}
-              </span>
-            </button>
-          )
-        }) : (
-          <div className="grid h-full place-items-center px-4 text-center text-xs text-slate-500">
-            {dashboard.searchQuery
-              ? "没有匹配的号码"
-              : dashboard.ordersCacheStatus === "empty"
-                ? "Blob 暂无号码快照，请点击刷新"
-                : "当前状态没有号码"}
-          </div>
-        )}
-      </div>
-      <Pager page={pager.page} pageCount={pager.pageCount} onChange={pager.setPage} label={`共 ${dashboard.filteredOrders.length} 个号码`} />
-    </section>
+        <div className="min-h-0 flex-1">
+          {dashboard.loadingOrders && !dashboard.filteredOrders.length ? (
+            <div className="flex flex-col gap-1.5">
+              {Array.from({ length: Math.min(pageSize, 5) }, (_, index) => <Skeleton key={index} className="h-12 w-full" />)}
+            </div>
+          ) : pager.items.length ? (
+            <ItemGroup className="gap-1">
+              {pager.items.map((order) => {
+                const key = orderKey(order)
+                const selected = dashboard.selectedKey === key
+                const count = dashboard.messageCounts[key]
+                const label = statusLabel(order)
+                return (
+                  <Item key={key} variant={selected ? "muted" : "default"} size="xs" className="flex-nowrap">
+                    <ItemMedia variant="icon" className={selected ? "text-primary" : "text-muted-foreground"}>
+                      <Phone />
+                    </ItemMedia>
+                    <ItemContent className="min-w-0">
+                      <ItemTitle className="max-w-full truncate font-mono text-xs">
+                        {displayPhone(order, dashboard.privacyMasked)}
+                      </ItemTitle>
+                      <ItemDescription className="truncate text-[10px]">
+                        {order.countryCode || "未知地区"} · {displayIdentifier(order.accountLabel || "默认账户", dashboard.privacyMasked)} · {formatPackage(order)}
+                      </ItemDescription>
+                    </ItemContent>
+                    <ItemActions>
+                      <Badge variant={statusVariant(label)} className="hidden sm:inline-flex">{label}</Badge>
+                      <Badge variant="outline">{count === undefined ? "未读" : `${count} 条`}</Badge>
+                      <Button
+                        type="button"
+                        variant={selected ? "secondary" : "ghost"}
+                        size="icon-sm"
+                        onClick={() => {
+                          dashboard.selectOrder(key)
+                          onSelect?.()
+                        }}
+                        aria-label={`选择号码 ${order.phoneNumber}`}
+                      >
+                        <MessageSquareText data-icon="inline-start" />
+                      </Button>
+                    </ItemActions>
+                  </Item>
+                )
+              })}
+            </ItemGroup>
+          ) : (
+            <Empty className="h-full p-3">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><Phone /></EmptyMedia>
+                <EmptyTitle>没有号码</EmptyTitle>
+                <EmptyDescription>
+                  {dashboard.searchQuery
+                    ? "没有匹配的号码"
+                    : dashboard.ordersCacheStatus === "empty"
+                      ? "Blob 暂无号码快照，请点击刷新"
+                      : "当前状态没有号码"}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+        </div>
+      </CardContent>
+      <CardFooter className="shrink-0 p-2">
+        <DataPagination
+          page={pager.page}
+          pageCount={pager.pageCount}
+          onChange={pager.setPage}
+          label={`共 ${dashboard.filteredOrders.length} 个号码`}
+        />
+      </CardFooter>
+    </Card>
   )
 }
 
@@ -594,49 +672,72 @@ function CodePanel({ dashboard }: { dashboard: DashboardController }) {
           : code
 
   return (
-    <section className="soft-panel flex h-full min-h-0 flex-col overflow-hidden rounded-2xl p-3">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <p className="text-[9px] font-semibold tracking-[0.18em] text-indigo-500 uppercase">Latest signal</p>
-          <h2 className="mt-1 text-sm font-semibold text-slate-900">最新验证码</h2>
+    <Card size="sm" className="h-full min-h-0 min-w-0 gap-0 py-0">
+      <CardHeader className="shrink-0 border-b py-3">
+        <CardTitle>最新验证码</CardTitle>
+        <CardDescription className="text-xs">最近一条含验证码短信</CardDescription>
+        <CardAction>
+          <Badge variant={dashboard.privacyMasked ? "outline" : "secondary"}>
+            {dashboard.privacyMasked ? "已保护" : "可见"}
+          </Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-2 py-2">
+        <Item variant="muted" className="min-h-0 flex-1 flex-nowrap">
+          <ItemContent className="min-w-0">
+            {dashboard.loadingMessages ? (
+              <Skeleton className="h-9 w-36" />
+            ) : (
+              <ItemTitle className="max-w-full font-mono text-3xl tracking-widest tabular-nums">
+                {displayCode}
+              </ItemTitle>
+            )}
+            <ItemDescription className="truncate text-xs">
+              {record
+                ? `${displayIdentifier(record.message.sender || "未知发送方", dashboard.privacyMasked)} · ${formatShortTime(record.message.time)}`
+                : "最近短信中没有识别到验证码"}
+            </ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <Button
+              variant="outline"
+              size="icon-sm"
+              onClick={() => dashboard.setPrivacyMasked(!dashboard.privacyMasked)}
+              disabled={!record || dashboard.loadingMessages}
+              aria-label="切换隐私遮罩"
+            >
+              {dashboard.privacyMasked ? <Eye data-icon="inline-start" /> : <EyeOff data-icon="inline-start" />}
+            </Button>
+            <Button
+              size="icon-sm"
+              onClick={dashboard.copyLatestCode}
+              disabled={!canCopy || dashboard.loadingMessages}
+              aria-label="复制最新验证码"
+            >
+              <Copy data-icon="inline-start" />
+            </Button>
+          </ItemActions>
+        </Item>
+        <div className="grid grid-cols-2 gap-2">
+          <Item variant="outline" size="xs" className="min-w-0">
+            <ItemContent className="min-w-0">
+              <ItemDescription>接收号码</ItemDescription>
+              <ItemTitle className="max-w-full truncate font-mono text-xs">
+                {order ? displayPhone(order, dashboard.privacyMasked) : "—"}
+              </ItemTitle>
+            </ItemContent>
+          </Item>
+          <Item variant="outline" size="xs" className="min-w-0">
+            <ItemContent className="min-w-0">
+              <ItemDescription>所属账户</ItemDescription>
+              <ItemTitle className="max-w-full truncate text-xs">
+                {displayIdentifier(order?.accountLabel || "—", dashboard.privacyMasked)}
+              </ItemTitle>
+            </ItemContent>
+          </Item>
         </div>
-        <Badge variant="outline" className="border-0 bg-white/55 text-[10px] font-normal text-slate-500">
-          {dashboard.privacyMasked ? "已保护" : "可见"}
-        </Badge>
-      </div>
-      <div className="soft-inset mt-3 flex min-h-0 flex-1 items-center justify-between rounded-2xl px-4">
-        <div className="min-w-0">
-          {dashboard.loadingMessages ? (
-            <Skeleton className="h-10 w-40" />
-          ) : (
-            <p className="font-mono text-[clamp(1.8rem,3.2vw,2.7rem)] font-semibold tracking-[0.13em] text-slate-900 tabular-nums">
-              {displayCode}
-            </p>
-          )}
-          <p className="mt-1 truncate text-[10px] text-slate-500">
-            {record ? `${displayIdentifier(record.message.sender || "未知发送方", dashboard.privacyMasked)} · ${formatShortTime(record.message.time)}` : "最近短信中没有识别到验证码"}
-          </p>
-        </div>
-        <div className="ml-3 flex shrink-0 gap-1.5">
-          <Button variant="ghost" size="icon-sm" className="soft-control" onClick={() => dashboard.setPrivacyMasked(!dashboard.privacyMasked)} disabled={!record || dashboard.loadingMessages} aria-label="切换隐私遮罩">
-            {dashboard.privacyMasked ? <Eye /> : <EyeOff />}
-          </Button>
-          <Button size="icon-sm" className="signal-button" onClick={dashboard.copyLatestCode} disabled={!canCopy || dashboard.loadingMessages} aria-label="复制最新验证码">
-            <Copy />
-          </Button>
-        </div>
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
-        <div className="min-w-0">
-          <span className="text-slate-400">接收号码</span>
-          <p className="mt-0.5 truncate font-mono font-medium text-slate-700">{order ? displayPhone(order, dashboard.privacyMasked) : "—"}</p>
-        </div>
-        <div className="min-w-0">
-          <span className="text-slate-400">所属账户</span>
-          <p className="mt-0.5 truncate font-medium text-slate-700">{displayIdentifier(order?.accountLabel || "—", dashboard.privacyMasked)}</p>
-        </div>
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -646,136 +747,161 @@ function MessageInbox({ dashboard, pageSize }: { dashboard: DashboardController;
 
   return (
     <>
-      <section className="soft-panel flex h-full min-h-0 flex-col overflow-hidden rounded-2xl">
-        <div className="flex h-14 shrink-0 items-center gap-3 border-b border-white/70 px-3">
-          <div className="signal-puck grid size-8 shrink-0 place-items-center rounded-xl text-indigo-600">
-            <Inbox className="size-3.5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-slate-900">短信收件箱</h2>
-              <span className="font-mono text-[10px] text-slate-500">{dashboard.messageTotalCount}</span>
-              {dashboard.messageHasMore && <Badge variant="destructive" className="h-4 px-1 text-[8px]">仍有更多</Badge>}
-            </div>
-            <p className="mt-0.5 truncate text-[10px] text-slate-500">
-              {dashboard.selectedOrder ? `${displayPhone(dashboard.selectedOrder, dashboard.privacyMasked)} · 点击任意短信查看全文` : "请先选择号码"}
-            </p>
-          </div>
-          <Switch
-            size="sm"
-            checked={!dashboard.privacyMasked}
-            onCheckedChange={(visible) => dashboard.setPrivacyMasked(!visible)}
-            disabled={!dashboard.selectedOrder || dashboard.loadingMessages}
-            aria-label="显示完整短信"
-          />
-        </div>
-        <div className="min-h-0 flex-1 px-2 py-1.5">
+      <Card size="sm" className="h-full min-h-0 min-w-0 gap-0 py-0">
+        <CardHeader className="shrink-0 border-b py-3">
+          <CardTitle className="flex items-center gap-2">
+            短信收件箱
+            <Badge variant="secondary">{dashboard.messageTotalCount}</Badge>
+            {dashboard.messageHasMore && <Badge variant="destructive">仍有更多</Badge>}
+          </CardTitle>
+          <CardDescription className="truncate text-xs">
+            {dashboard.selectedOrder
+              ? `${displayPhone(dashboard.selectedOrder, dashboard.privacyMasked)} · 点击详情查看全文`
+              : "请先选择号码"}
+          </CardDescription>
+          <CardAction>
+            <Switch
+              size="sm"
+              checked={!dashboard.privacyMasked}
+              onCheckedChange={(visible) => dashboard.setPrivacyMasked(!visible)}
+              disabled={!dashboard.selectedOrder || dashboard.loadingMessages}
+              aria-label="显示完整短信"
+            />
+          </CardAction>
+        </CardHeader>
+        <CardContent className="min-h-0 flex-1 p-2">
           {dashboard.loadingMessages ? (
-            <div className="space-y-1.5">
-              {Array.from({ length: Math.min(pageSize, 4) }, (_, index) => <Skeleton key={index} className="h-[68px] w-full rounded-xl" />)}
+            <div className="flex flex-col gap-1.5">
+              {Array.from({ length: Math.min(pageSize, 4) }, (_, index) => <Skeleton key={index} className="h-16 w-full" />)}
             </div>
-          ) : pager.items.length ? pager.items.map((message, index) => {
-            const sender = displayIdentifier(message.sender || "未知发送方", dashboard.privacyMasked)
-            const content = displayMessageContent(message.content, dashboard.privacyMasked)
-            const firstCode = message.code[0]
-            return (
-              <button
-                key={String(message.id ?? `${message.time}-${pager.page}-${index}`)}
-                type="button"
-                className="mb-1.5 grid min-h-[68px] w-full grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-2 rounded-xl px-2.5 text-left transition hover:bg-white/55 focus-visible:outline-2 focus-visible:outline-indigo-400"
-                onClick={() => setSelectedMessage(message)}
-              >
-                <Avatar className="size-8">
-                  <AvatarFallback className="bg-indigo-500/8 text-[9px] font-semibold text-indigo-700">
-                    {Array.from(sender).slice(0, 2).join("").toUpperCase() || "—"}
-                  </AvatarFallback>
-                </Avatar>
-                <span className="min-w-0">
-                  <span className="flex items-center gap-2">
-                    <span className="truncate text-[11px] font-semibold text-slate-700">{sender}</span>
-                    <time className="shrink-0 text-[9px] text-slate-400">{formatShortTime(message.time)}</time>
-                  </span>
-                  <span className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-500">{content}</span>
-                </span>
-                <span className="soft-inset rounded-lg px-2 py-1 font-mono text-[9px] tracking-wider text-slate-600">
-                  {firstCode ? (dashboard.privacyMasked ? "••••••" : firstCode) : "无代码"}
-                  {message.code.length > 1 ? ` +${message.code.length - 1}` : ""}
-                </span>
-              </button>
-            )
-          }) : (
-            <div className="grid h-full place-items-center px-4 text-center text-xs text-slate-500">
-              {dashboard.selectedOrder
-                ? dashboard.messageCacheStatus === "empty"
-                  ? "Blob 暂无短信快照，请点击刷新"
-                  : "当前号码暂时没有短信"
-                : "先选择一个号码"}
-            </div>
+          ) : pager.items.length ? (
+            <ItemGroup className="gap-1">
+              {pager.items.map((message, index) => {
+                const sender = displayIdentifier(message.sender || "未知发送方", dashboard.privacyMasked)
+                const content = displayMessageContent(message.content, dashboard.privacyMasked)
+                const firstCode = message.code[0]
+                return (
+                  <Item key={String(message.id ?? `${message.time}-${pager.page}-${index}`)} size="xs" className="flex-nowrap">
+                    <ItemMedia>
+                      <Avatar>
+                        <AvatarFallback>{Array.from(sender).slice(0, 2).join("").toUpperCase() || "—"}</AvatarFallback>
+                      </Avatar>
+                    </ItemMedia>
+                    <ItemContent className="min-w-0">
+                      <ItemTitle className="max-w-full truncate text-xs">
+                        {sender}
+                        <span className="font-normal text-muted-foreground">{formatShortTime(message.time)}</span>
+                      </ItemTitle>
+                      <ItemDescription className="line-clamp-2 text-[10px]">{content}</ItemDescription>
+                    </ItemContent>
+                    <ItemActions>
+                      <Badge variant="outline" className="font-mono">
+                        {firstCode ? (dashboard.privacyMasked ? "••••••" : firstCode) : "无代码"}
+                        {message.code.length > 1 ? ` +${message.code.length - 1}` : ""}
+                      </Badge>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setSelectedMessage(message)}
+                        aria-label={`查看来自 ${sender} 的完整短信`}
+                      >
+                        <MessageSquareText data-icon="inline-start" />
+                      </Button>
+                    </ItemActions>
+                  </Item>
+                )
+              })}
+            </ItemGroup>
+          ) : (
+            <Empty className="h-full p-3">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><Inbox /></EmptyMedia>
+                <EmptyTitle>{dashboard.selectedOrder ? "没有短信" : "尚未选择号码"}</EmptyTitle>
+                <EmptyDescription>
+                  {dashboard.selectedOrder
+                    ? dashboard.messageCacheStatus === "empty"
+                      ? "Blob 暂无短信快照，请点击刷新"
+                      : "当前号码暂时没有短信"
+                    : "先选择一个号码读取短信"}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           )}
-        </div>
-        <Pager page={pager.page} pageCount={pager.pageCount} onChange={pager.setPage} label={`共 ${dashboard.messages.length} 条已获取短信`} />
-      </section>
+        </CardContent>
+        <CardFooter className="shrink-0 p-2">
+          <DataPagination
+            page={pager.page}
+            pageCount={pager.pageCount}
+            onChange={pager.setPage}
+            label={`已获取 ${dashboard.messages.length} 条完整短信`}
+          />
+        </CardFooter>
+      </Card>
       <MessageDetailDialog message={selectedMessage} dashboard={dashboard} onClose={() => setSelectedMessage(null)} />
     </>
   )
 }
 
-function MobileNavigation({ active, onChange }: { active: MobilePanel; onChange: (panel: MobilePanel) => void }) {
-  const items: Array<{ value: MobilePanel; label: string; icon: typeof Phone }> = [
-    { value: "numbers", label: "号码", icon: Phone },
-    { value: "code", label: "验证码", icon: KeyRound },
-    { value: "messages", label: "短信", icon: MessageSquareText },
-  ]
+function MobileWorkspace({ dashboard }: { dashboard: DashboardController }) {
+  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("numbers")
+
   return (
-    <nav className="soft-panel grid h-10 grid-cols-3 gap-1 rounded-2xl p-1 lg:hidden" aria-label="工作台分区">
-      {items.map(({ value, label, icon: Icon }) => (
-        <button
-          key={value}
-          type="button"
-          className={cn("flex items-center justify-center gap-1.5 rounded-xl text-[11px] font-medium", active === value ? "signal-puck text-indigo-700" : "text-slate-500")}
-          onClick={() => onChange(value)}
-        >
-          <Icon className="size-3.5" />
-          {label}
-        </button>
-      ))}
-    </nav>
+    <Tabs
+      value={mobilePanel}
+      onValueChange={(value) => setMobilePanel(value as MobilePanel)}
+      className="h-full w-full min-h-0 min-w-0 lg:hidden"
+    >
+      <TabsList className="w-full shrink-0">
+        <TabsTrigger value="numbers">
+          <Phone data-icon="inline-start" />
+          号码
+        </TabsTrigger>
+        <TabsTrigger value="code">
+          <KeyRound data-icon="inline-start" />
+          验证码
+        </TabsTrigger>
+        <TabsTrigger value="messages">
+          <MessageSquareText data-icon="inline-start" />
+          短信
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent value="numbers" className="min-h-0 min-w-0">
+        <NumberWorkspace dashboard={dashboard} pageSize={4} onSelect={() => setMobilePanel("code")} />
+      </TabsContent>
+      <TabsContent value="code" className="min-h-0 min-w-0">
+        <CodePanel dashboard={dashboard} />
+      </TabsContent>
+      <TabsContent value="messages" className="min-h-0 min-w-0">
+        <MessageInbox dashboard={dashboard} pageSize={4} />
+      </TabsContent>
+    </Tabs>
   )
 }
 
 export function DashboardShell({ dashboard }: { dashboard: DashboardController }) {
-  const [mobilePanel, setMobilePanel] = useState<MobilePanel>("numbers")
-
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#eef2f8] text-slate-900">
-      <a href="#dashboard-content" className="sr-only z-[70] rounded-md bg-white px-3 py-2 focus:not-sr-only focus:fixed focus:top-2 focus:left-2">
+    <div className="flex h-dvh min-h-0 min-w-0 flex-col overflow-hidden bg-muted/30 text-foreground">
+      <a href="#dashboard-content" className="sr-only rounded-md bg-background px-3 py-2 focus:not-sr-only focus:fixed focus:top-2 focus:left-2">
         跳到主要内容
       </a>
       <WorkspaceHeader dashboard={dashboard} />
-      <main id="dashboard-content" className="grid min-h-0 flex-1 grid-rows-[58px_40px_minmax(0,1fr)] gap-2 p-2 md:grid-rows-[60px_40px_minmax(0,1fr)] md:gap-3 md:p-3 lg:grid-rows-[60px_minmax(0,1fr)]">
+      <main
+        id="dashboard-content"
+        className="grid min-h-0 min-w-0 flex-1 grid-rows-[64px_minmax(0,1fr)] gap-2 p-2 md:gap-3 md:p-3"
+      >
         <CommandStrip dashboard={dashboard} />
-        <MobileNavigation active={mobilePanel} onChange={setMobilePanel} />
 
-        <div className="hidden min-h-0 grid-cols-[176px_minmax(390px,1.1fr)_minmax(318px,.8fr)] gap-3 lg:grid xl:grid-cols-[190px_minmax(470px,1.12fr)_minmax(350px,.88fr)]">
+        <div className="hidden min-h-0 grid-cols-[190px_minmax(430px,1.12fr)_minmax(340px,.88fr)] gap-3 lg:grid">
           <AccountRail dashboard={dashboard} />
-          <NumberWorkspace dashboard={dashboard} pageSize={8} />
-          <div className="grid min-h-0 grid-rows-[218px_minmax(0,1fr)] gap-3">
+          <NumberWorkspace dashboard={dashboard} pageSize={7} />
+          <div className="grid min-h-0 grid-rows-[210px_minmax(0,1fr)] gap-3">
             <CodePanel dashboard={dashboard} />
-            <MessageInbox dashboard={dashboard} pageSize={4} />
+            <MessageInbox dashboard={dashboard} pageSize={3} />
           </div>
         </div>
 
-        <div className="min-h-0 lg:hidden">
-          <div className={cn("h-full", mobilePanel !== "numbers" && "hidden")}>
-            <NumberWorkspace dashboard={dashboard} pageSize={4} onSelect={() => setMobilePanel("code")} />
-          </div>
-          <div className={cn("h-full", mobilePanel !== "code" && "hidden")}>
-            <CodePanel dashboard={dashboard} />
-          </div>
-          <div className={cn("h-full", mobilePanel !== "messages" && "hidden")}>
-            <MessageInbox dashboard={dashboard} pageSize={4} />
-          </div>
-        </div>
+        <MobileWorkspace dashboard={dashboard} />
       </main>
     </div>
   )
