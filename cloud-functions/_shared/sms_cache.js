@@ -6,6 +6,8 @@ import {
 
 import { getStore } from "@edgeone/pages-blob"
 
+import { createManagedTokenBridgeHeaders } from "./kitesim_auth.js"
+
 
 const ACCESS_KEY_MIN_LENGTH = 12
 const CACHE_ENVELOPE_VERSION = 1
@@ -21,6 +23,7 @@ const MESSAGE_ORIGIN_PATH = "/origin/messages-origin"
 const ORDERS_ORIGIN_PATH = "/origin/orders-origin"
 const PHONE_PATTERN = /^\+?\d{6,20}$/
 const PUBLIC_ORIGIN_HOST = "esim.opxqo.cn"
+const LOCAL_ORIGIN_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"])
 
 
 function environmentValue(context, name) {
@@ -118,24 +121,55 @@ function cacheWarning(logger, operation, error) {
 }
 
 
-function requestHeaders(request, contentType = false) {
+function requestHeaders(request, contentType = false, extraHeaders = {}) {
   const headers = new Headers({ "Accept": "application/json" })
   if (contentType) headers.set("Content-Type", "application/json")
   const authorization = request.headers.get("Authorization")
   const dashboardKey = request.headers.get("X-Dashboard-Key")
   if (authorization) headers.set("Authorization", authorization)
   if (dashboardKey) headers.set("X-Dashboard-Key", dashboardKey)
+  for (const [name, value] of Object.entries(extraHeaders)) {
+    if (value) headers.set(name, String(value))
+  }
   return headers
 }
 
 
 function publicRequestUrl(request) {
   const url = new URL(request.url)
-  // EdgeOne builds request.url from its internal Host and exposes the public route separately.
   const pagesHost = (request.headers.get("eo-pages-host") || "")
     .split(",", 1)[0]
     .trim()
     .toLowerCase()
+  if (url.protocol === "http:" && LOCAL_ORIGIN_HOSTS.has(url.hostname)) {
+    // Makers dev invokes Node on a private worker port and keeps the public dev
+    // router in x-forwarded-host. Route /origin back through that validated
+    // loopback address so the Python function receives the request.
+    const forwardedHost = (request.headers.get("x-forwarded-host") || "")
+      .split(",", 1)[0]
+      .trim()
+      .toLowerCase()
+    const forwardedProto = (request.headers.get("x-forwarded-proto") || "http")
+      .split(",", 1)[0]
+      .trim()
+      .toLowerCase()
+    try {
+      const forwardedUrl = new URL(`${forwardedProto}://${forwardedHost}`)
+      if (
+        ["http:", "https:"].includes(forwardedUrl.protocol)
+        && LOCAL_ORIGIN_HOSTS.has(forwardedUrl.hostname)
+        && !forwardedUrl.username
+        && !forwardedUrl.password
+      ) {
+        url.protocol = forwardedUrl.protocol
+        url.host = forwardedUrl.host
+      }
+    } catch {
+      // Missing or invalid forwarded metadata keeps the already-local URL.
+    }
+    return url
+  }
+  // EdgeOne builds request.url from its internal Host and exposes the public route separately.
   if (pagesHost !== PUBLIC_ORIGIN_HOST) return url
 
   url.protocol = "https:"
@@ -467,6 +501,8 @@ function messageResponse(snapshot, requestPayload, cacheStatus) {
     {
       items,
       count: items.length,
+      totalCount: Number.isInteger(snapshot.totalCount) ? snapshot.totalCount : items.length,
+      hasMore: snapshot.hasMore === true,
       accountId: snapshot.accountId || String(requestPayload.accountId || ""),
       accountLabel: snapshot.accountLabel || "",
       revealCode: requestPayload.revealCode === true,
@@ -484,6 +520,8 @@ function emptyMessageResponse(payload) {
     {
       items: [],
       count: 0,
+      totalCount: 0,
+      hasMore: false,
       accountId: String(payload.accountId || ""),
       accountLabel: "",
       revealCode: payload.revealCode === true,
@@ -496,7 +534,7 @@ function emptyMessageResponse(payload) {
 }
 
 
-async function fetchMessageSnapshot(request, payload, fetchImpl, cacheStatus) {
+async function fetchMessageSnapshot(request, payload, fetchImpl, cacheStatus, extraHeaders = {}) {
   const originUrl = publicRequestUrl(request)
   originUrl.pathname = MESSAGE_ORIGIN_PATH
   originUrl.search = ""
@@ -508,7 +546,7 @@ async function fetchMessageSnapshot(request, payload, fetchImpl, cacheStatus) {
     originUrl,
     {
       method: "POST",
-      headers: requestHeaders(request, true),
+      headers: requestHeaders(request, true, extraHeaders),
       body: JSON.stringify(originPayload),
     },
     cacheStatus,
@@ -558,7 +596,18 @@ export function createSmsCacheHandler(dependencies = {}) {
     const refresh = payload.refresh === true
 
     if (refresh) {
-      const origin = await fetchMessageSnapshot(request, payload, fetchImpl, "refresh")
+      const managedTokenHeaders = await createManagedTokenBridgeHeaders(context, {
+        getStoreImpl: dependencies.getAuthStoreImpl || getStoreImpl,
+        nowImpl,
+        logger,
+      })
+      const origin = await fetchMessageSnapshot(
+        request,
+        payload,
+        fetchImpl,
+        "refresh",
+        managedTokenHeaders,
+      )
       if (!origin.ok) return origin.response
       if (!validMessageSnapshot(origin.payload)) {
         return errorResponse("短信回源快照格式无效", 502, "upstream", "refresh")
@@ -643,7 +692,7 @@ function emptyOrdersResponse(query) {
 }
 
 
-async function fetchOrdersSnapshot(request, query, fetchImpl, cacheStatus) {
+async function fetchOrdersSnapshot(request, query, fetchImpl, cacheStatus, extraHeaders = {}) {
   const originUrl = publicRequestUrl(request)
   originUrl.pathname = ORDERS_ORIGIN_PATH
   originUrl.search = ""
@@ -653,7 +702,7 @@ async function fetchOrdersSnapshot(request, query, fetchImpl, cacheStatus) {
   return fetchJson(
     fetchImpl,
     originUrl,
-    { method: "GET", headers: requestHeaders(request) },
+    { method: "GET", headers: requestHeaders(request, false, extraHeaders) },
     cacheStatus,
   )
 }
@@ -683,7 +732,18 @@ export function createOrdersCacheHandler(dependencies = {}) {
     const ttlSeconds = cacheTtlSeconds(context)
 
     if (query.refresh) {
-      const origin = await fetchOrdersSnapshot(request, query, fetchImpl, "refresh")
+      const managedTokenHeaders = await createManagedTokenBridgeHeaders(context, {
+        getStoreImpl: dependencies.getAuthStoreImpl || getStoreImpl,
+        nowImpl,
+        logger,
+      })
+      const origin = await fetchOrdersSnapshot(
+        request,
+        query,
+        fetchImpl,
+        "refresh",
+        managedTokenHeaders,
+      )
       if (!origin.ok) return origin.response
       if (!validOrdersSnapshot(origin.payload)) {
         return errorResponse("号码回源快照格式无效", 502, "upstream", "refresh")

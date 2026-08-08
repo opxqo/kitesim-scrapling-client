@@ -181,7 +181,7 @@ class KitesimClient:
     ) -> None:
         token = token.strip()
         if not token:
-            raise KitesimAuthError("缺少 KITESIM_TOKEN")
+            raise KitesimAuthError("缺少 Kitesim 运行时登录凭据")
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         # Scrapling interprets ``retries`` as the total number of attempts.
@@ -327,10 +327,13 @@ def build_messages(
     *,
     show_code: bool,
     show_sms: bool,
-    limit: int = 20,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
-    for message in normalize_messages(data)[:limit]:
+    records = normalize_messages(data)
+    if limit is not None:
+        records = records[:limit]
+    for message in records:
         content = str(message.get("content") or "")
         codes = extract_codes(content)
         messages.append(

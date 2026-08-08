@@ -122,11 +122,16 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply min-w-0 overflow-x-clip bg-background text-foreground antialiased;
+    @apply min-w-0 overflow-hidden bg-background text-foreground antialiased;
     font-feature-settings: "ss01", "cv02", "cv03", "cv04";
   }
   html {
-    @apply min-h-dvh font-sans;
+    @apply h-dvh overflow-hidden font-sans;
+  }
+  body,
+  #root {
+    height: 100dvh;
+    overflow: hidden;
   }
 }
 

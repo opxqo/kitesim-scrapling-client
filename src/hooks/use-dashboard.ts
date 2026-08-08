@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
-import { ApiError, copyText, getHealth, getMessages, getOrders, verifySession } from "@/lib/api"
+import {
+  ApiError,
+  completeKitesimAuth,
+  copyText,
+  getHealth,
+  getKitesimAuthChallenge,
+  getKitesimAuthStatus,
+  getMessages,
+  getOrders,
+  verifySession,
+} from "@/lib/api"
 import {
   firstCodeRecord,
   isCodeRevealed,
@@ -83,7 +93,7 @@ function validOrdersPayload(payload: OrdersResponse): boolean {
 function explainError(error: unknown): string {
   if (!(error instanceof ApiError)) return "读取失败，请稍后再试"
   if (error.kind === "dashboard_auth") return "访问口令已失效，请重新输入"
-  if (error.kind === "upstream_auth") return "Kitesim Token 已失效，请更新服务端环境变量"
+  if (error.kind === "upstream_auth") return "Kitesim 登录状态已失效，请在账户管理中重新验证"
   return error.message || "读取失败，请稍后再试"
 }
 
@@ -213,6 +223,8 @@ export function useDashboard() {
   const [warnings, setWarnings] = useState<AccountWarning[]>([])
   const [selectedKey, setSelectedKey] = useState("")
   const [messages, setMessages] = useState<KitesimMessage[]>([])
+  const [messageTotalCount, setMessageTotalCount] = useState(0)
+  const [messageHasMore, setMessageHasMore] = useState(false)
   const [messageCounts, setMessageCounts] = useState<Record<string, number>>({})
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({})
   const [revealCode, setRevealCode] = useState(false)
@@ -265,6 +277,8 @@ export function useDashboard() {
     setSelectedKey("")
     selectedKeyRef.current = ""
     setMessages([])
+    setMessageTotalCount(0)
+    setMessageHasMore(false)
     setMessageCounts({})
     setStatusCounts({})
     setRevealCode(false)
@@ -353,6 +367,8 @@ export function useDashboard() {
         const items = payload.items
         const cacheStatus = normalizeCacheStatus(payload.cacheStatus)
         setMessages(items)
+        setMessageTotalCount(Number.isInteger(payload.totalCount) ? payload.totalCount : items.length)
+        setMessageHasMore(payload.hasMore === true)
         setMessageCacheStatus(cacheStatus)
         setRevealCode(Boolean(payload.revealCode))
         revealCodeRef.current = Boolean(payload.revealCode)
@@ -399,6 +415,8 @@ export function useDashboard() {
       } catch (error) {
         if (sequence !== messageSequence.current) return null
         setMessages([])
+        setMessageTotalCount(0)
+        setMessageHasMore(false)
         setMessageCacheStatus(null)
         setRevealCode(false)
         revealCodeRef.current = false
@@ -434,6 +452,8 @@ export function useDashboard() {
       messageSequence.current += 1
       setLoadingOrders(true)
       setMessages([])
+      setMessageTotalCount(0)
+      setMessageHasMore(false)
       setMessageCacheStatus(null)
       setRevealCode(privacyOptions.revealCode)
       revealCodeRef.current = privacyOptions.revealCode
@@ -748,6 +768,28 @@ export function useDashboard() {
     if (!privacyMasked && isCodeRevealed(code)) void copyValue(code, "验证码")
   }, [copyValue, messages, privacyMasked])
 
+  const readKitesimAuthStatus = useCallback(() => {
+    const accessKey = accessKeyRef.current
+    if (!accessKey) throw new ApiError("工作台尚未解锁", 401, "dashboard_auth")
+    return getKitesimAuthStatus(accessKey)
+  }, [])
+
+  const requestKitesimAuthChallenge = useCallback((accountId: string) => {
+    const accessKey = accessKeyRef.current
+    if (!accessKey) throw new ApiError("工作台尚未解锁", 401, "dashboard_auth")
+    return getKitesimAuthChallenge(accessKey, accountId)
+  }, [])
+
+  const submitKitesimAuthChallenge = useCallback((
+    accountId: string,
+    captchaCode: string,
+    captchaKey: string,
+  ) => {
+    const accessKey = accessKeyRef.current
+    if (!accessKey) throw new ApiError("工作台尚未解锁", 401, "dashboard_auth")
+    return completeKitesimAuth(accessKey, { accountId, captchaCode, captchaKey })
+  }, [])
+
   return {
     health,
     healthError,
@@ -764,6 +806,8 @@ export function useDashboard() {
     selectedKey,
     selectedOrder,
     messages,
+    messageTotalCount,
+    messageHasMore,
     messageCounts,
     statusCounts,
     revealCode,
@@ -787,6 +831,9 @@ export function useDashboard() {
     selectOrder,
     copyValue,
     copyLatestCode,
+    readKitesimAuthStatus,
+    requestKitesimAuthChallenge,
+    submitKitesimAuthChallenge,
   }
 }
 
