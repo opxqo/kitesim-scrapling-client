@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react"
-import { KeyRound, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react"
+import { CheckCircle2, KeyRound, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -32,7 +32,7 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
   const [challenge, setChallenge] = useState<KitesimAuthChallenge | null>(null)
   const [captchaCode, setCaptchaCode] = useState("")
   const [loadingStatus, setLoadingStatus] = useState(true)
-  const [loadingChallenge, setLoadingChallenge] = useState(false)
+  const [loadingAccountId, setLoadingAccountId] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [failure, setFailure] = useState("")
 
@@ -72,17 +72,17 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
     }
   }, [edgeOneRuntime, readStatus])
 
-  const loadChallenge = async () => {
-    setLoadingChallenge(true)
+  const loadChallenge = async (accountId: string) => {
+    setLoadingAccountId(accountId)
     setFailure("")
     try {
-      const nextChallenge = await requestChallenge()
+      const nextChallenge = await requestChallenge(accountId)
       setChallenge(nextChallenge)
       setCaptchaCode("")
     } catch (error) {
       setFailure(errorMessage(error))
     } finally {
-      setLoadingChallenge(false)
+      setLoadingAccountId("")
     }
   }
 
@@ -92,11 +92,15 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
     setSubmitting(true)
     setFailure("")
     try {
-      const result = await submitChallenge(captchaCode, challenge.captchaKey)
+      const result = await submitChallenge(
+        challenge.accountId,
+        captchaCode,
+        challenge.captchaKey,
+      )
       setChallenge(null)
       setCaptchaCode("")
       await loadStatus()
-      toast.success(`Kitesim Token 已更新（${result.emailHint || "管理员账户"}）`)
+      toast.success(`Kitesim 登录状态已更新（${result.emailHint}）`)
     } catch (error) {
       const message = errorMessage(error)
       setFailure(message)
@@ -113,43 +117,46 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
     return (
       <Alert>
         <KeyRound />
-        <AlertTitle>半自动 Token 登录仅在 EdgeOne 运行</AlertTitle>
+        <AlertTitle>半自动登录仅在 EdgeOne Functions 运行</AlertTitle>
         <AlertDescription>
-          本地 Flask + Vite 不提供 Blob 认证路由；请使用 EdgeOne Preview 或 <code>edgeone makers dev</code>。
+          本地 Flask + Vite 不提供 Blob 认证路由；请使用 <code>edgeone makers dev</code>。
         </AlertDescription>
       </Alert>
     )
   }
 
+  const readyCount = status?.readyCount ?? 0
+  const accountCount = status?.accountCount ?? 0
+
   return (
-    <Card size="sm">
-      <CardHeader>
+    <Card size="sm" className="border-0 bg-transparent ring-0 shadow-none">
+      <CardHeader className="pr-14 pt-3">
         <CardTitle className="flex items-center gap-2">
           <KeyRound className="size-4 text-primary" />
-          Kitesim Token 管理
+          Kitesim 账户登录
         </CardTitle>
         <CardDescription className="text-xs">
-          后台获取图片验证码；管理员识别一次后，Token 将加密保存到 EdgeOne Blob。
+          每个账户由管理员识别一次图片验证码；生成的 Token 分账户加密保存到 Blob。
         </CardDescription>
         <CardAction>
           <Badge
             variant="outline"
-            className={status?.tokenAvailable
+            className={readyCount > 0
               ? "border-emerald-200 bg-emerald-50 font-normal text-emerald-700"
               : "font-normal"}
           >
-            {loadingStatus ? "检查中" : status?.tokenAvailable ? "Token 可用" : "尚未登录"}
+            {loadingStatus ? "检查中" : `${readyCount}/${accountCount} 已登录`}
           </Badge>
         </CardAction>
       </CardHeader>
 
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-3 pb-3">
         {status && !status.configured && (
           <Alert className="border-amber-200 bg-amber-50 text-amber-900">
             <TriangleAlert />
             <AlertTitle>服务端配置未完成</AlertTitle>
             <AlertDescription className="text-xs text-amber-800">
-              请先配置 Kitesim 登录邮箱、密码、Token 加密密钥和内部签名密钥。
+              请配置分项登录邮箱、共享密码、Token 加密密钥和内部签名密钥。
             </AlertDescription>
           </Alert>
         )}
@@ -162,32 +169,56 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
           </Alert>
         )}
 
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div className="min-w-0 space-y-1 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1.5">
-              <ShieldCheck className="size-3.5 text-emerald-600" />
-              浏览器不会收到 Kitesim Token 或登录密码
-            </div>
-            <div>
-              账户：{status?.emailHint || "等待服务端配置"}
-              {status?.verifiedAt ? ` · 最近验证 ${formatDateTime(status.verifiedAt)}` : ""}
-            </div>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void loadChallenge()}
-            disabled={loadingChallenge || submitting || status?.configured === false}
-          >
-            <RefreshCw className={loadingChallenge ? "animate-spin" : ""} />
-            {challenge ? "换一张验证码" : "获取验证码"}
-          </Button>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <ShieldCheck className="size-3.5 text-emerald-600" />
+          浏览器不会收到 Kitesim 密码或 Token
+        </div>
+
+        <div className="grid gap-2 md:grid-cols-3">
+          {status?.accounts.map((account) => {
+            const isLoading = loadingAccountId === account.accountId
+            const isActive = challenge?.accountId === account.accountId
+            return (
+              <div
+                key={account.accountId}
+                className="soft-inset flex min-h-[104px] flex-col justify-between gap-2 rounded-2xl border-0 p-3"
+              >
+                <div className="min-w-0 space-y-1">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    {account.tokenAvailable && <CheckCircle2 className="size-4 text-emerald-600" />}
+                    <span className="truncate">{account.emailHint}</span>
+                    <Badge variant="outline" className="font-normal">
+                      {account.tokenAvailable ? "已登录" : "待验证"}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {account.verifiedAt
+                      ? `最近验证 ${formatDateTime(account.verifiedAt)}`
+                      : "尚未生成可用登录状态"}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void loadChallenge(account.accountId)}
+                  disabled={Boolean(loadingAccountId) || submitting || !account.credentialsConfigured}
+                >
+                  <RefreshCw className={isLoading ? "animate-spin" : ""} />
+                  {isActive ? "换一张验证码" : account.tokenAvailable ? "重新登录" : "获取验证码"}
+                </Button>
+              </div>
+            )
+          })}
         </div>
 
         {challenge && (
-          <form className="grid gap-3 rounded-lg border bg-muted/30 p-3 md:grid-cols-[160px_minmax(180px,1fr)_auto] md:items-end" onSubmit={completeLogin}>
+          <form
+            className="signal-puck grid gap-3 rounded-2xl border-0 p-3 md:grid-cols-[160px_minmax(180px,1fr)_auto] md:items-end"
+            onSubmit={completeLogin}
+          >
             <div className="space-y-1.5">
-              <Label>图片验证码</Label>
+              <Label>图片验证码 · {challenge.emailHint}</Label>
               <div className="flex h-12 items-center justify-center overflow-hidden rounded-md border bg-white px-2">
                 <img
                   src={`data:image/png;base64,${challenge.captchaImageBase64}`}
@@ -214,14 +245,14 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
               />
             </div>
             <Button type="submit" disabled={submitting || captchaCode.length !== 4}>
-              {submitting ? "正在验证…" : "验证并更新 Token"}
+              {submitting ? "正在验证…" : "验证并登录"}
             </Button>
           </form>
         )}
 
-        {status?.tokenAvailable && !challenge && (
+        {readyCount > 0 && !challenge && (
           <p className="text-xs text-muted-foreground">
-            Token 已就绪；普通读取仍只访问 Blob 快照，点击工作台刷新按钮时才会访问 Kitesim。
+            已登录账户可用于刷新；普通读取仍只访问 Blob 快照，只有显式或已启用的定时刷新才访问 Kitesim。
           </p>
         )}
       </CardContent>

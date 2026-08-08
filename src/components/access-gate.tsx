@@ -67,7 +67,7 @@ export function AccessGate({ dashboard }: { dashboard: DashboardController }) {
             在一张安全桌面中完成。
           </h1>
           <p className="mt-5 max-w-lg text-sm leading-7 text-muted-foreground">
-            聚合多个 Kitesim Token 账户，只读取号码订单与短信。Token 始终保留在服务端环境变量中，浏览器不会接收或保存它们。
+            聚合多个 Kitesim 账户，只读取号码订单与短信。登录产生的 Token 仅以密文保存在服务端 Blob，浏览器不会接收或保存它们。
           </p>
           <div className="mt-8 grid grid-cols-3 gap-3">
             {[
@@ -156,7 +156,7 @@ export function AccessGate({ dashboard }: { dashboard: DashboardController }) {
               <ShieldCheck />
               <AlertTitle>Token 不在这里填写</AlertTitle>
               <AlertDescription className="text-xs">
-                当前输入框仅验证 DASHBOARD_ACCESS_KEY，Kitesim Token 只存在服务端。
+                当前输入框仅验证 DASHBOARD_ACCESS_KEY，Kitesim 登录信息由后台单独管理。
               </AlertDescription>
             </Alert>
           </CardContent>

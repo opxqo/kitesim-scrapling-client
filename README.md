@@ -1,193 +1,111 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Kitesim Relay：将多个账户的号码、短信与验证码汇聚为一条由服务端 Token 与版本化 JSON Blob 支撑的只读信号链">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Kitesim Relay 多账户只读信号工作台">
 </p>
 
 <p align="center">
-  <a href="#核心能力">核心能力</a> ·
-  <a href="#架构">架构</a> ·
-  <a href="#快速开始">快速开始</a> ·
-  <a href="#部署到-edgeone">EdgeOne 部署</a> ·
-  <a href="#安全模型">安全模型</a>
+  <code>React 19 + TypeScript</code> · <code>EdgeOne Functions</code> · <code>Python 3.10 + Scrapling</code> · <code>EdgeOne Blob</code>
 </p>
 
 <p align="center">
-  <code>React 19 + TypeScript</code> · <code>Python 3.10 + Scrapling</code> · <code>EdgeOne Blob</code>
-</p>
-
-<p align="center">
-  <a href="https://edgeone.ai/pages/new?repository-url=https%3A%2F%2Fgithub.com%2Fopxqo%2Fkitesim-scrapling-client&project-name=kitesim-relay&root-directory=.%2F&install-command=npm%20ci&build-command=npm%20run%20build&output-directory=.%2Fdist&env=KITESIM_LOGIN_EMAIL%2CKITESIM_LOGIN_PASSWORD%2CKITESIM_AUTH_ENCRYPTION_KEY%2CKITESIM_AUTH_BRIDGE_SECRET%2CKITESIM_TOKEN_NAME_1%2CDASHBOARD_ACCESS_KEY%2CSMS_CACHE_TTL_SECONDS&env-description=Configure%20these%20server-side%20values%20before%20the%20first%20deployment">
+  <a href="https://edgeone.ai/pages/new?repository-url=https%3A%2F%2Fgithub.com%2Fopxqo%2Fkitesim-scrapling-client&project-name=kitesim-relay&root-directory=.%2F&install-command=npm%20ci&build-command=npm%20run%20build&output-directory=.%2Fdist&env=KITESIM_LOGIN_EMAIL_1%2CKITESIM_LOGIN_EMAIL_2%2CKITESIM_LOGIN_EMAIL_3%2CKITESIM_LOGIN_PASSWORD%2CKITESIM_AUTH_ENCRYPTION_KEY%2CKITESIM_AUTH_BRIDGE_SECRET%2CDASHBOARD_ACCESS_KEY%2CSMS_CACHE_TTL_SECONDS&env-description=Configure%20server-side%20login%20credentials%20and%20independent%20secrets%20before%20deployment">
     <img src="https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg" alt="使用 EdgeOne Makers 一键部署 Kitesim Relay">
   </a>
 </p>
 
-<p align="center"><sub>一键部署会预填仓库与构建配置；首次上线前仍需设置服务端密钥。</sub></p>
+Kitesim Relay 将多个 Kitesim 账户的号码、短信和 OTP 汇聚到一张私有工作台。项目只提供读取能力，不创建订单、不发送短信，也不执行支付、退款或账户修改。
 
-Kitesim Relay 面向需要集中管理多个 Kitesim Token 的个人与小团队。它把号码状态、短信和 OTP 聚合到一张私有工作台，同时把上游访问与浏览器隔离开。
+## 工作方式
 
-## 核心能力
+- **账户登录**：服务端从 `KITESIM_LOGIN_EMAIL_1` … `KITESIM_LOGIN_EMAIL_20` 与共享密码读取登录信息。管理员为每个账户人工输入一次图片验证码。
+- **凭据保存**：登录产生的 Token 按账户使用 AES-256-GCM 加密，分别写入私有 `kitesim-auth` Blob；密码不写入 Blob，浏览器也不会收到密码或 Token。
+- **普通读取**：浏览器只读取号码和短信 Blob 快照。快照为 `hit`、`stale` 或 `empty` 时都不会静默访问 Kitesim。
+- **显式刷新**：仅手动刷新或用户主动开启的定时刷新会解密当前可用账户，并用 120 秒有效的 HMAC 签名包调用 Python Origin，然后回写快照。
+- **局部容错**：一个账户失效时，其余已登录账户仍可返回；后台会标明需要重新验证的账户。
 
-<p align="center">
-  <img src="./assets/readme/capabilities.svg" width="100%" alt="Kitesim Relay 运行契约：最多二十个账户、上游只读 GET、Token 仅保存在服务端、普通读取优先使用版本化明文 JSON Blob 快照">
-</p>
+项目不包含 OCR，也不会绕过验证码。每个账户的 4 位图片验证码必须由管理员识别并输入。
 
-项目的边界故意保持很窄：只聚合读取，不提供创建订单、发送短信、支付、退款或账户修改能力。单个账户失败时，其余账户仍可继续返回。
+## 本地运行
 
-## 架构
-
-<p align="center">
-  <img src="./assets/readme/architecture.svg" width="100%" alt="Kitesim Relay 双路径架构：普通读取只访问版本化明文 JSON Blob，显式刷新才经过 Python、Scrapling 与 Kitesim GET API 并回写新快照">
-</p>
-
-- **普通读取**：浏览器 → EdgeOne Node API → 版本化明文 JSON Blob 快照。`hit`、`stale`、`empty` 都不会自动访问 Kitesim。
-- **显式刷新**：手动刷新或用户主动开启的定时刷新 → Python Origin → Scrapling `Fetcher.get` → Kitesim → 回写明文 JSON Blob。如果当前对象是旧版 AES 快照，本次刷新会将它覆盖迁移为新格式。
-- **半自动登录**：管理员请求一次性图片验证码 → 人工输入 4 位字符 → Node 函数使用服务端邮箱与密码登录 Kitesim → 验证账户后将 Token 以 AES-256-GCM 密文写入独立 Blob。浏览器从不接收 Token 或密码。
-- **热路径**：暖实例复用 Blob Store，并在最多 64 条记录的 5 秒 L1 中复用刚读取或写入的快照；同一 key 的并发读取共享一次 Blob I/O。
-
-浏览器只接收匿名 `accountId`、账户名称与服务端签名的 `messageHandle`；Kitesim Token 始终留在服务端。
-新写入不再做应用层 AES 加密；Blob 中保存的是带 `version`、`cachedAt`、`expiresAt` 和 `payload` 的 JSON 记录。
-
-## 快速开始
-
-需要 Python 3.10 与 Node.js。
+需要 Node.js 22、Python 3.10 和 EdgeOne CLI。
 
 ```bash
+npm ci
 python3.10 -m venv .venv
 source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -r requirements-web.txt
-npm ci
-
-export KITESIM_TOKEN_1='YOUR_KITESIM_TOKEN'
-export KITESIM_TOKEN_NAME_1='主号码'
-export DASHBOARD_ACCESS_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+python -m pip install -r cloud-functions/requirements.txt
+cp .env.example .env
 ```
 
-分别启动 API 与前端：
+编辑被 Git 忽略的 `.env`，至少填写登录邮箱、共享密码以及三个独立安全值。然后运行完整的 EdgeOne 本地环境：
 
 ```bash
-# 终端 1
-source .venv/bin/activate
-python app.py
+edgeone makers dev
 ```
+
+打开 CLI 输出的本地地址，粘贴 `DASHBOARD_ACCESS_KEY` 解锁。进入“账户登录”，依次为每个账户获取验证码、人工输入并提交。全部账户完成后，点击工作台刷新按钮才会首次访问 Kitesim 并生成号码/短信快照。
+
+若从旧静态 Token 配置迁移，可运行仓库内脚本。它会删除旧 Token 变量、保留现有账户密码、生成独立控制台口令，并保证 `.env` 权限为 `600`：
 
 ```bash
-# 终端 2
-npm run dev
+node scripts/configure-local-accounts.mjs first@example.com second@example.com third@example.com
 ```
 
-打开 <http://127.0.0.1:5173>，输入 `DASHBOARD_ACCESS_KEY`。不要在网页中填写 Kitesim Token。
+脚本不会输出密码、Token 或生成的密钥。
 
-> [!NOTE]
-> 本地 Flask + Vite 模式直接访问 Python API，适合调试上游接口，但不模拟 EdgeOne Blob 优先路径。完整缓存链请使用 `edgeone makers dev` 或 Preview 环境验证。
-
-## 部署到 EdgeOne
-
-点击页面顶部的 **Deploy to EdgeOne**，然后在项目设置中配置以下服务端变量。推荐使用半自动登录：部署后管理员只需识别一次验证码，后续刷新自动使用已保存 Token。
+## 环境变量
 
 | 变量 | 要求 | 用途 |
 | --- | --- | --- |
-| `KITESIM_LOGIN_EMAIL` | 半自动登录必填 | Kitesim 登录邮箱，仅服务端可见 |
-| `KITESIM_LOGIN_PASSWORD` | 半自动登录必填 | Kitesim 登录密码，仅服务端可见 |
-| `KITESIM_AUTH_ENCRYPTION_KEY` | 半自动登录必填 | Base64 编码的 32 字节 AES 密钥，用于加密 Token Blob |
-| `KITESIM_AUTH_BRIDGE_SECRET` | 半自动登录必填 | 至少 24 字符，签名 Node → Python 的短时内部 Token 请求 |
-| `KITESIM_TOKEN_1` | 静态模式可选 | 第一个 Kitesim 账户 Token；使用半自动登录时可留空 |
-| `KITESIM_TOKEN_NAME_1` | 可选 | 账户显示名称 |
-| `DASHBOARD_ACCESS_KEY` | 必填 | 控制台口令，至少 12 个字符 |
-| `SMS_CACHE_ENCRYPTION_KEY` | 迁移旧快照时可选 | 仅用于读取旧版 AES-256-GCM Blob；手动刷新后覆盖为明文 JSON |
+| `KITESIM_LOGIN_EMAIL_1` … `KITESIM_LOGIN_EMAIL_20` | 至少 1 个 | 分账户登录邮箱；编号可以不连续 |
+| `KITESIM_LOGIN_PASSWORD` | 必填 | 所有已配置账户共用的 Kitesim 密码 |
+| `KITESIM_AUTH_ENCRYPTION_KEY` | 必填 | Base64 编码的 32 字节 AES 密钥，用于加密账户 Token Blob |
+| `KITESIM_AUTH_BRIDGE_SECRET` | 必填 | 至少 24 字符，签名 Node → Python 的短时多账户载荷 |
+| `DASHBOARD_ACCESS_KEY` | 必填 | 独立控制台口令，至少 12 个字符；不要复用 Kitesim 密码 |
+| `KITESIM_REQUEST_TIMEOUT` | 可选 | 上游单次请求超时，默认 12 秒 |
 | `SMS_CACHE_TTL_SECONDS` | 可选 | 快照新鲜度，默认 20 秒，范围 5–300 秒 |
+| `SMS_CACHE_ENCRYPTION_KEY` | 旧版迁移可选 | 仅读取旧 AES 快照；新部署应留空 |
 
-半自动登录获得的 Token 会作为账户 1；多账户继续添加静态 `KITESIM_TOKEN_2` … `KITESIM_TOKEN_20`，并按需添加对应的账户名称。保存或修改 EdgeOne 环境变量后必须重新部署，现有部署不会自动取得新值。
-全新部署应将 `SMS_CACHE_ENCRYPTION_KEY` 留空；只有从加密快照版本升级且仍需读取旧数据时，才继续保留当时的原密钥。
-
-生成两个独立密钥：
+生成独立密钥：
 
 ```bash
 openssl rand -base64 32  # KITESIM_AUTH_ENCRYPTION_KEY
 openssl rand -hex 32     # KITESIM_AUTH_BRIDGE_SECRET
+openssl rand -base64 32  # DASHBOARD_ACCESS_KEY
 ```
 
-<details>
-<summary><strong>使用 EdgeOne CLI 部署与验证</strong></summary>
+本项目不支持任何静态 Kitesim Token 环境变量。运行时 Token 只能由验证码登录生成，并从加密 Blob 通过短时签名桥进入 Python Origin。
 
-Global 与 China 项目相互隔离，部署前先确认当前账号与项目：
+## 部署到 EdgeOne
+
+本仓库已通过 `edgeone.json` 声明构建命令、`dist` 输出、Node.js 版本、安全响应头与 Python 函数超时。用户可在 EdgeOne 控制台手动部署，并设置与本地相同的变量名。
+
+使用 CLI 时，先确认账号和项目，再逐项设置变量；不要把真实值写进命令历史共享记录或仓库：
 
 ```bash
 edgeone -v
 edgeone whoami
 edgeone makers link
-edgeone makers env set KITESIM_LOGIN_EMAIL "$KITESIM_LOGIN_EMAIL"
+edgeone makers env set KITESIM_LOGIN_EMAIL_1 "$KITESIM_LOGIN_EMAIL_1"
 edgeone makers env set KITESIM_LOGIN_PASSWORD "$KITESIM_LOGIN_PASSWORD"
 edgeone makers env set KITESIM_AUTH_ENCRYPTION_KEY "$KITESIM_AUTH_ENCRYPTION_KEY"
 edgeone makers env set KITESIM_AUTH_BRIDGE_SECRET "$KITESIM_AUTH_BRIDGE_SECRET"
-edgeone makers env set KITESIM_TOKEN_NAME_1 "$KITESIM_TOKEN_NAME_1"
 edgeone makers env set DASHBOARD_ACCESS_KEY "$DASHBOARD_ACCESS_KEY"
-edgeone makers env set KITESIM_REQUEST_TIMEOUT '12'
 edgeone makers env set SMS_CACHE_TTL_SECONDS '20'
 edgeone makers deploy -e preview
 ```
 
-`edgeone.json` 已声明 `npm ci`、`npm run build`、`dist`、Node.js 22.11.0 与 60 秒 Python 函数超时。
+为其余账户重复设置编号邮箱。环境变量修改后需要重新部署；验证码登录产生的加密 Token 保存在 Blob，不应放回环境变量。
 
-Preview 至少检查首页、构建后的静态资源、`/api/health`、`/api/session`、`/api/auth/status`、`/api/auth/challenge`、`/api/auth/complete`、`/api/orders`、`/api/messages`，以及 `Content-Security-Policy`、`X-Frame-Options`、`X-Content-Type-Options`、`Cache-Control` 与 `X-SMS-Cache`。Preview 验证完成前不要发布到 Production。
+## 安全边界
 
-</details>
+- Kitesim 上游业务客户端只发起只读 GET；登录端点仅用于交换短时 Token。
+- 浏览器只接收脱敏邮箱提示、稳定 `accountId` 和服务端签名的 `messageHandle`。
+- 每个 Token 使用账户专属 Blob 路径和 AES-GCM AAD；修改对应邮箱后旧密文会自动失效。
+- Python Origin 不读取静态 Token 配置；缺少、伪造或过期的内部多账户签名包会在访问上游前被拒绝。
+- 控制台口令只保存在当前标签页的 `sessionStorage`，关闭标签页后清除。
+- 号码、短信和验证码快照是私有 Blob 中的版本化 JSON，必须限制 EdgeOne 项目和存储访问权限。
 
-## 安全模型
-
-- **只读上游**：Kitesim 客户端只使用静态 `Fetcher.get`。
-- **服务端身份**：Token 不进入浏览器；`messageHandle` 将账户、订单与号码绑定，不能跨账户复用。
-- **人工验证码**：项目不 OCR、不过验证码；管理员输入 Kitesim 一次性图片中的 4 位字符，错误或过期后必须换一张。
-- **Token 密文**：半自动登录得到的 Token 使用 AES-256-GCM 保存到独立 Blob；邮箱与密码仅来自服务端环境变量，不写入 Blob。
-- **内部签名**：只有显式刷新会解密 Token，并通过 120 秒有效的 HMAC 签名传给 Python Origin；伪造、缺字段或过期请求会在访问 Kitesim 前被拒绝。
-- **默认遮罩**：验证码与短信中的长数字默认隐藏，完整内容必须由用户显式请求。
-- **私有会话**：控制台口令只保存在当前标签页的 `sessionStorage`，关闭标签页后清除。
-- **Blob 优先**：普通读取只访问快照；过期或缺失都不会静默回源。
-- **明文快照**：新快照是版本化 JSON，项目不再对 Blob 内容做应用层加密；保密性依赖 EdgeOne 项目与 Blob 访问边界。
-
-> [!IMPORTANT]
-> 不要把真实 Token 或控制台口令写入代码、README、日志与截图。任何已经暴露的 Token 都应立即在 Kitesim 侧刷新。Blob 快照包含号码、短信和验证码等明文敏感数据，必须严格限制 EdgeOne 项目与存储访问权限。
-
-<details>
-<summary><strong>完整配置参考</strong></summary>
-
-| 变量 | 用途 |
-| --- | --- |
-| `KITESIM_TOKEN_1` … `KITESIM_TOKEN_20` | 推荐的多账户配置，每个变量一个 Token |
-| `KITESIM_TOKEN_NAME_1` … `KITESIM_TOKEN_NAME_20` | 对应的可选账户名称 |
-| `KITESIM_TOKENS` | 本地简写：JSON 或逗号、分号、换行分隔；不超过 500 字节 |
-| `KITESIM_TOKEN` | 单账户兼容模式，也是 CLI 使用的变量 |
-| `KITESIM_LOGIN_EMAIL` | 半自动登录邮箱，仅供 Node 函数访问 |
-| `KITESIM_LOGIN_PASSWORD` | 半自动登录密码，仅供 Node 函数访问 |
-| `KITESIM_AUTH_ENCRYPTION_KEY` | Base64 编码的 32 字节 AES-256-GCM Token 加密密钥 |
-| `KITESIM_AUTH_BRIDGE_SECRET` | Node 与 Python Origin 之间的 HMAC 签名密钥，至少 24 字符 |
-| `DASHBOARD_ACCESS_KEY` | 控制台访问口令，至少 12 个字符 |
-| `KITESIM_REQUEST_TIMEOUT` | 上游请求超时，默认 12 秒 |
-| `SMS_CACHE_ENCRYPTION_KEY` | 可选的旧快照迁移密钥；仅读取 AES-256-GCM 快照，手动刷新后改写为明文 JSON |
-| `SMS_CACHE_TTL_SECONDS` | 快照新鲜度，默认 20 秒，范围 5–300 秒 |
-
-本地少量账户也可以使用：
-
-```bash
-export KITESIM_TOKENS='[{"name":"主号码","token":"TOKEN_1"},{"name":"备用号码","token":"TOKEN_2"}]'
-```
-
-所有 Token 来源会合并并去重，最多接受 20 个账户。EdgeOne 当前将单个环境变量值限制为 500 字节，因此部署时优先使用编号变量；具体限制以 [EdgeOne Makers Limits and Quotas](https://pages.edgeone.ai/document/limits-and-quotas) 为准。
-
-</details>
-
-<details>
-<summary><strong>CLI 与开发验证</strong></summary>
-
-命令行客户端使用单个 `KITESIM_TOKEN`：
-
-```bash
-python kitesim_scrapling.py
-python kitesim_scrapling.py --all-status
-python kitesim_scrapling.py --show-code --show-sms
-python kitesim_scrapling.py --json
-```
-
-完整检查：
+## 验证
 
 ```bash
 npm run typecheck
@@ -198,38 +116,12 @@ npm run build
 .venv/bin/python -m py_compile app.py kitesim_scrapling.py cloud-functions/origin/index.py cloud-functions/_shared/*.py
 ```
 
-测试只使用假 Token、假号码与假短信，不访问真实 Kitesim。
+测试只使用假账户、假 Token、假号码和假短信，不访问真实 Kitesim。
 
-</details>
+## 已知边界
 
-<details>
-<summary><strong>项目结构</strong></summary>
-
-```text
-src/                              React 控制台、数据控制器与 UI 组件
-assets/readme/                    README 纯 SVG 视觉资产
-cloud-functions/api/             EdgeOne Node API、验证码登录与 Blob 路由
-cloud-functions/origin/          EdgeOne Python Origin
-cloud-functions/_shared/         账户签名、缓存、API 与 Kitesim 客户端
-app.py                            本地 Flask API 与 dist 预览服务
-kitesim_scrapling.py             单账户命令行客户端
-edgeone.json                      构建、安全响应头与函数配置
-```
-
-</details>
-
-<details>
-<summary><strong>已知边界</strong></summary>
-
-- Blob TTL 只区分 `hit` 与 `stale`；旧快照不会自动删除，也不会触发自动刷新。
-- 半自动登录依赖 Kitesim 当前 H5 登录与图片验证码接口；如果 Kitesim 修改接口字段、风控或验证码规则，需要同步适配。
-- 管理员登录成功只更新 Token，不会立即回源；仍需手动点击刷新，或等待用户主动启用的定时刷新。
-- `SMS_CACHE_ENCRYPTION_KEY` 不再参与新快照写入；它只能读取同一密钥加密的旧快照，显式刷新成功后该对象将被明文 JSON 覆盖。
-- 定时刷新默认关闭，可由用户选择 30 秒、1 分钟或 5 分钟。
-- 单次最多返回 20 个号码；每个号码最多返回 20 条短信。
-- 默认状态最多并发读取 8 个账户；“全部状态”最多查询 8 个账户，并对每个账户读取 5 种状态。
-- Python Origin 固定挂载在 `/origin/*`，避免覆盖 Node Blob API。
-- 项目只支持 Scrapling 0.4.12 的静态 `Fetcher`，不支持 `DynamicFetcher` 或 `StealthyFetcher`。
-- Blob 快照不会自动删除，长期不再使用的对象需要手动清理。
-
-</details>
+- 登录依赖 Kitesim 当前 H5 登录和图片验证码接口；接口字段或风控变化时需要同步适配。
+- 登录成功只更新账户 Token，不立即刷新业务数据。
+- 定时刷新默认关闭，可选 30 秒、1 分钟或 5 分钟。
+- “全部状态”最多同时查询 8 个账户；普通状态最多并发读取 8 个账户。
+- Blob 快照不会自动删除，长期废弃对象需要在存储侧手动清理。

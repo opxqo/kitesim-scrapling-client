@@ -12,8 +12,10 @@ import { getStore } from "@edgeone/pages-blob"
 
 const ACCESS_KEY_MIN_LENGTH = 12
 const AUTH_STORE_NAME = "kitesim-auth"
-const TOKEN_OBJECT_KEY = "managed-token/v1.json"
-const TOKEN_RECORD_VERSION = 1
+const TOKEN_OBJECT_PREFIX = "managed-token/v2"
+const TOKEN_RECORD_VERSION = 2
+const MAX_LOGIN_ACCOUNTS = 20
+const MAX_BRIDGE_PAYLOAD_BYTES = 16 * 1024
 const MAX_REQUEST_BODY_BYTES = 2 * 1024
 const MAX_UPSTREAM_BODY_BYTES = 2 * 1024 * 1024
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
@@ -100,25 +102,51 @@ function emailHint(email) {
 }
 
 
+function tokenObjectKey(accountId) {
+  return `${TOKEN_OBJECT_PREFIX}/${accountId}.json`
+}
+
+
+function loginAccounts(context) {
+  const accounts = []
+  for (let index = 1; index <= MAX_LOGIN_ACCOUNTS; index += 1) {
+    const email = environmentValue(context, `KITESIM_LOGIN_EMAIL_${index}`).toLowerCase()
+    if (!email) continue
+    accounts.push({
+      accountId: `login_${index}`,
+      email,
+      emailHint: emailHint(email),
+      valid: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),
+    })
+  }
+  return accounts
+}
+
+
 function authConfiguration(context) {
-  const email = environmentValue(context, "KITESIM_LOGIN_EMAIL").toLowerCase()
+  const accounts = loginAccounts(context)
   const password = environmentValue(context, "KITESIM_LOGIN_PASSWORD")
   const encryptionKey = decodeEncryptionKey(context)
   const bridgeSecret = environmentValue(context, "KITESIM_AUTH_BRIDGE_SECRET")
-  const credentialsConfigured = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  const credentialsConfigured = accounts.length > 0
+    && accounts.every((account) => account.valid)
     && password.length >= 8
     && password.length <= 256
   const storageConfigured = Boolean(encryptionKey) && bridgeSecret.length >= 24
   return {
-    email,
+    accounts,
     password,
     encryptionKey,
     bridgeSecret,
     credentialsConfigured,
     storageConfigured,
     configured: credentialsConfigured && storageConfigured,
-    emailHint: emailHint(email),
   }
+}
+
+
+function configuredAccount(configuration, accountId) {
+  return configuration.accounts.find((account) => account.accountId === accountId) || null
 }
 
 
@@ -147,13 +175,13 @@ async function fetchJson(fetchImpl, url, options, timeoutMs = DEFAULT_REQUEST_TI
     clearTimeout(timeout)
   }
 
-  const text = await response.text()
-  if (Buffer.byteLength(text, "utf8") > MAX_UPSTREAM_BODY_BYTES) {
+  const body = await response.text()
+  if (Buffer.byteLength(body, "utf8") > MAX_UPSTREAM_BODY_BYTES) {
     return { ok: false, status: 502, payload: null, kind: "payload" }
   }
   let payload = null
   try {
-    payload = JSON.parse(text)
+    payload = JSON.parse(body)
   } catch {
     // Upstream format failures are converted to a redacted gateway response.
   }
@@ -186,6 +214,7 @@ function validCompletePayload(payload) {
     payload
       && typeof payload === "object"
       && !Array.isArray(payload)
+      && /^login_(?:[1-9]|1\d|20)$/.test(String(payload.accountId || "").trim())
       && /^[A-Za-z0-9]{4}$/.test(String(payload.captchaCode || "").trim())
       && /^captcha:[A-Za-z0-9_-]{8,96}$/.test(String(payload.captchaKey || "").trim()),
   )
@@ -195,10 +224,10 @@ function validCompletePayload(payload) {
 async function requestObject(request) {
   const declaredLength = Number.parseInt(request.headers.get("Content-Length") || "0", 10)
   if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BODY_BYTES) return null
-  const text = await request.text()
-  if (Buffer.byteLength(text, "utf8") > MAX_REQUEST_BODY_BYTES) return null
+  const body = await request.text()
+  if (Buffer.byteLength(body, "utf8") > MAX_REQUEST_BODY_BYTES) return null
   try {
-    const payload = JSON.parse(text)
+    const payload = JSON.parse(body)
     return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : null
   } catch {
     return null
@@ -206,10 +235,11 @@ async function requestObject(request) {
 }
 
 
-function encryptTokenRecord(token, configuration, verifiedAt, randomBytesImpl) {
+function encryptTokenRecord(token, account, encryptionKey, verifiedAt, randomBytesImpl) {
+  const objectKey = tokenObjectKey(account.accountId)
   const iv = randomBytesImpl(12)
-  const cipher = createCipheriv("aes-256-gcm", configuration.encryptionKey, iv)
-  cipher.setAAD(Buffer.from(TOKEN_OBJECT_KEY, "utf8"))
+  const cipher = createCipheriv("aes-256-gcm", encryptionKey, iv)
+  cipher.setAAD(Buffer.from(objectKey, "utf8"))
   const ciphertext = Buffer.concat([
     cipher.update(JSON.stringify({ token }), "utf8"),
     cipher.final(),
@@ -220,18 +250,19 @@ function encryptTokenRecord(token, configuration, verifiedAt, randomBytesImpl) {
     iv: iv.toString("base64"),
     tag: cipher.getAuthTag().toString("base64"),
     ciphertext: ciphertext.toString("base64"),
-    emailHash: createHash("sha256").update(configuration.email, "utf8").digest("hex"),
+    emailHash: createHash("sha256").update(account.email, "utf8").digest("hex"),
     verifiedAt,
   }
 }
 
 
-function decryptTokenRecord(record, encryptionKey) {
+function decryptTokenRecord(record, account, encryptionKey) {
   if (
     !record
     || typeof record !== "object"
     || record.version !== TOKEN_RECORD_VERSION
     || record.algorithm !== "A256GCM"
+    || record.emailHash !== createHash("sha256").update(account.email, "utf8").digest("hex")
   ) {
     return null
   }
@@ -241,7 +272,7 @@ function decryptTokenRecord(record, encryptionKey) {
     const ciphertext = Buffer.from(String(record.ciphertext || ""), "base64")
     if (iv.length !== 12 || tag.length !== 16 || !ciphertext.length) return null
     const decipher = createDecipheriv("aes-256-gcm", encryptionKey, iv)
-    decipher.setAAD(Buffer.from(TOKEN_OBJECT_KEY, "utf8"))
+    decipher.setAAD(Buffer.from(tokenObjectKey(account.accountId), "utf8"))
     decipher.setAuthTag(tag)
     const payload = JSON.parse(Buffer.concat([
       decipher.update(ciphertext),
@@ -264,10 +295,15 @@ function storeWarning(logger, operation, error) {
 }
 
 
-async function readManagedToken(context, dependencies = {}) {
+async function readManagedAccounts(context, dependencies = {}) {
   const configuration = authConfiguration(context)
+  const emptyAccounts = configuration.accounts.map((account) => ({
+    ...account,
+    token: null,
+    verifiedAt: "",
+  }))
   if (!configuration.storageConfigured) {
-    return { configuration, token: null, verifiedAt: "", unavailable: false }
+    return { configuration, accounts: emptyAccounts, unavailable: false }
   }
   const getStoreImpl = dependencies.getStoreImpl || getStore
   const logger = dependencies.logger || console.warn
@@ -276,34 +312,53 @@ async function readManagedToken(context, dependencies = {}) {
     store = getStoreImpl(AUTH_STORE_NAME)
   } catch (error) {
     storeWarning(logger, "initialization", error)
-    return { configuration, token: null, verifiedAt: "", unavailable: true }
+    return { configuration, accounts: emptyAccounts, unavailable: true }
   }
   try {
-    const record = await store.get(TOKEN_OBJECT_KEY, { type: "json", consistency: "strong" })
-    const decrypted = decryptTokenRecord(record, configuration.encryptionKey)
-    return {
-      configuration,
-      token: decrypted?.token || null,
-      verifiedAt: decrypted?.verifiedAt || "",
-      unavailable: false,
-    }
+    const records = await Promise.all(configuration.accounts.map((account) => (
+      store.get(tokenObjectKey(account.accountId), { type: "json", consistency: "strong" })
+    )))
+    const accounts = configuration.accounts.map((account, index) => {
+      const decrypted = decryptTokenRecord(records[index], account, configuration.encryptionKey)
+      return {
+        ...account,
+        token: decrypted?.token || null,
+        verifiedAt: decrypted?.verifiedAt || "",
+      }
+    })
+    return { configuration, accounts, unavailable: false }
   } catch (error) {
     storeWarning(logger, "read", error)
-    return { configuration, token: null, verifiedAt: "", unavailable: true }
+    return { configuration, accounts: emptyAccounts, unavailable: true }
   }
 }
 
 
 export async function createManagedTokenBridgeHeaders(context, dependencies = {}) {
-  const tokenState = await readManagedToken(context, dependencies)
-  if (!tokenState.token || tokenState.configuration.bridgeSecret.length < 24) return {}
+  const state = await readManagedAccounts(context, dependencies)
+  if (state.unavailable || state.configuration.bridgeSecret.length < 24) return {}
+  const availableAccounts = state.accounts
+    .filter((account) => account.token)
+    .map((account) => ({
+      accountId: account.accountId,
+      label: account.emailHint || account.accountId,
+      token: account.token,
+    }))
+  if (!availableAccounts.length) return {}
+
+  const encodedAccounts = Buffer.from(JSON.stringify({
+    version: 1,
+    accounts: availableAccounts,
+  }), "utf8").toString("base64url")
+  if (Buffer.byteLength(encodedAccounts, "utf8") > MAX_BRIDGE_PAYLOAD_BYTES) return {}
+
   const nowImpl = dependencies.nowImpl || Date.now
   const timestamp = String(Math.floor(nowImpl() / 1000))
-  const signature = createHmac("sha256", tokenState.configuration.bridgeSecret)
-    .update(`${timestamp}\n${tokenState.token}`, "utf8")
+  const signature = createHmac("sha256", state.configuration.bridgeSecret)
+    .update(`${timestamp}\n${encodedAccounts}`, "utf8")
     .digest("hex")
   return {
-    "X-Kitesim-Managed-Token": tokenState.token,
+    "X-Kitesim-Managed-Accounts": encodedAccounts,
     "X-Kitesim-Managed-Timestamp": timestamp,
     "X-Kitesim-Managed-Signature": signature,
   }
@@ -319,16 +374,23 @@ export function createAuthStatusHandler(dependencies = {}) {
     const authorizationFailure = authorizeRequest(context, request)
     if (authorizationFailure) return authorizationFailure
 
-    const state = await readManagedToken(context, dependencies)
+    const state = await readManagedAccounts(context, dependencies)
     if (state.unavailable) return errorResponse("Token 存储暂时不可用", 503, "storage")
+    const accounts = state.accounts.map((account) => ({
+      accountId: account.accountId,
+      emailHint: account.emailHint,
+      credentialsConfigured: account.valid && state.configuration.password.length >= 8,
+      tokenAvailable: Boolean(account.token),
+      verifiedAt: account.verifiedAt,
+    }))
     return jsonResponse({
       ok: true,
       configured: state.configuration.configured,
       credentialsConfigured: state.configuration.credentialsConfigured,
       storageConfigured: state.configuration.storageConfigured,
-      tokenAvailable: Boolean(state.token),
-      verifiedAt: state.verifiedAt,
-      emailHint: state.configuration.emailHint,
+      accountCount: accounts.length,
+      readyCount: accounts.filter((account) => account.tokenAvailable).length,
+      accounts,
     })
   }
 }
@@ -345,8 +407,11 @@ export function createAuthChallengeHandler(dependencies = {}) {
     if (authorizationFailure) return authorizationFailure
     const configuration = authConfiguration(context)
     if (!configuration.configured) {
-      return errorResponse("Kitesim 半自动登录环境变量尚未完整配置", 503, "configuration")
+      return errorResponse("Kitesim 多账户登录环境变量尚未完整配置", 503, "configuration")
     }
+    const accountId = new URL(request.url).searchParams.get("accountId") || ""
+    const account = configuredAccount(configuration, accountId)
+    if (!account) return errorResponse("登录账户无效", 400, "validation")
 
     const result = await fetchJson(fetchImpl, CAPTCHA_ENDPOINT, {
       method: "GET",
@@ -356,9 +421,10 @@ export function createAuthChallengeHandler(dependencies = {}) {
       return errorResponse("Kitesim 验证码暂时无法获取", 502, "upstream")
     }
     return jsonResponse({
+      accountId: account.accountId,
       captchaKey: result.payload.captchaKey,
       captchaImageBase64: result.payload.captchaImageBase64,
-      emailHint: configuration.emailHint,
+      emailHint: account.emailHint,
     })
   }
 }
@@ -392,19 +458,21 @@ export function createAuthCompleteHandler(dependencies = {}) {
     if (authorizationFailure) return authorizationFailure
     const configuration = authConfiguration(context)
     if (!configuration.configured) {
-      return errorResponse("Kitesim 半自动登录环境变量尚未完整配置", 503, "configuration")
+      return errorResponse("Kitesim 多账户登录环境变量尚未完整配置", 503, "configuration")
     }
 
     const payload = await requestObject(request)
     if (!validCompletePayload(payload)) {
       return errorResponse("验证码请求参数无效", 400, "validation")
     }
+    const account = configuredAccount(configuration, String(payload.accountId).trim())
+    if (!account) return errorResponse("登录账户无效", 400, "validation")
 
     const login = await fetchJson(fetchImpl, LOGIN_ENDPOINT, {
       method: "POST",
       headers: upstreamHeaders(true),
       body: JSON.stringify({
-        email: configuration.email,
+        email: account.email,
         pass: configuration.password,
         captchaCode: String(payload.captchaCode).trim(),
         captchaKey: String(payload.captchaKey).trim(),
@@ -425,15 +493,21 @@ export function createAuthCompleteHandler(dependencies = {}) {
       || userInfo.payload?.data?.passport
       || "",
     ).trim().toLowerCase()
-    if (!userInfo.ok || userInfo.payload?.code !== 200 || accountEmail !== configuration.email) {
+    if (!userInfo.ok || userInfo.payload?.code !== 200 || accountEmail !== account.email) {
       return errorResponse("Token 账户验证失败，未写入存储", 502, "upstream_auth")
     }
 
     const verifiedAt = new Date(nowImpl()).toISOString()
-    const record = encryptTokenRecord(token, configuration, verifiedAt, randomBytesImpl)
+    const record = encryptTokenRecord(
+      token,
+      account,
+      configuration.encryptionKey,
+      verifiedAt,
+      randomBytesImpl,
+    )
     try {
       const store = getStoreImpl(AUTH_STORE_NAME)
-      await store.setJSON(TOKEN_OBJECT_KEY, record, { cacheControl: "no-store" })
+      await store.setJSON(tokenObjectKey(account.accountId), record, { cacheControl: "no-store" })
     } catch (error) {
       storeWarning(logger, "write", error)
       return errorResponse("Token 已获取但安全存储失败，请重试", 503, "storage")
@@ -441,9 +515,10 @@ export function createAuthCompleteHandler(dependencies = {}) {
 
     return jsonResponse({
       ok: true,
+      accountId: account.accountId,
       tokenAvailable: true,
       verifiedAt,
-      emailHint: configuration.emailHint,
+      emailHint: account.emailHint,
     })
   }
 }

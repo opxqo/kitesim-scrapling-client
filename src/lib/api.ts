@@ -66,13 +66,17 @@ export function getKitesimAuthStatus(accessKey: string): Promise<KitesimAuthStat
   return apiRequest<KitesimAuthStatus>("/api/auth/status", accessKey)
 }
 
-export function getKitesimAuthChallenge(accessKey: string): Promise<KitesimAuthChallenge> {
-  return apiRequest<KitesimAuthChallenge>("/api/auth/challenge", accessKey)
+export function getKitesimAuthChallenge(
+  accessKey: string,
+  accountId: string,
+): Promise<KitesimAuthChallenge> {
+  const query = new URLSearchParams({ accountId })
+  return apiRequest<KitesimAuthChallenge>(`/api/auth/challenge?${query.toString()}`, accessKey)
 }
 
 export function completeKitesimAuth(
   accessKey: string,
-  payload: { captchaCode: string; captchaKey: string },
+  payload: { accountId: string; captchaCode: string; captchaKey: string },
 ): Promise<KitesimAuthComplete> {
   return apiRequest<KitesimAuthComplete>("/api/auth/complete", accessKey, {
     method: "POST",

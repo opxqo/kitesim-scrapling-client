@@ -71,15 +71,16 @@ describe("dashboard cache request intent", () => {
 
   it("uses protected same-origin routes for the managed Kitesim login", async () => {
     await getKitesimAuthStatus("dashboard-test-key")
-    await getKitesimAuthChallenge("dashboard-test-key")
+    await getKitesimAuthChallenge("dashboard-test-key", "login_2")
     await completeKitesimAuth("dashboard-test-key", {
+      accountId: "login_2",
       captchaCode: "A7B9",
       captchaKey: "captcha:0123456789abcdef",
     })
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       "/api/auth/status",
-      "/api/auth/challenge",
+      "/api/auth/challenge?accountId=login_2",
       "/api/auth/complete",
     ])
     for (const [, options] of fetchMock.mock.calls) {
@@ -89,6 +90,7 @@ describe("dashboard cache request intent", () => {
     expect(fetchMock.mock.calls[1][1]?.method).toBeUndefined()
     expect(fetchMock.mock.calls[2][1]?.method).toBe("POST")
     expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({
+      accountId: "login_2",
       captchaCode: "A7B9",
       captchaKey: "captcha:0123456789abcdef",
     })

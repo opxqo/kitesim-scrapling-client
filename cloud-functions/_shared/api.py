@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hmac
+import base64
+import binascii
+import json
 import os
 import re
 import time
@@ -17,7 +20,7 @@ from .accounts import (
     KitesimAccount,
     KitesimConfigurationError,
     create_message_handle,
-    load_kitesim_accounts,
+    load_managed_kitesim_accounts,
     verify_message_handle,
 )
 from .kitesim import (
@@ -27,6 +30,7 @@ from .kitesim import (
     KitesimError,
     build_messages,
     compact_order,
+    normalize_messages,
     select_orders,
 )
 
@@ -34,6 +38,7 @@ from .kitesim import (
 ACCESS_KEY_MIN_LENGTH = 12
 MAX_ALL_STATUS_ACCOUNTS = 8
 MANAGED_TOKEN_MAX_SKEW_SECONDS = 120
+MAX_MANAGED_ACCOUNTS_HEADER_BYTES = 16 * 1024
 PHONE_PATTERN = re.compile(r"^\+?\d{6,20}$")
 
 
@@ -75,44 +80,52 @@ def _protected(view: Callable[..., Any]) -> Callable[..., Any]:
     return wrapped
 
 
-def _managed_token_from_request() -> str:
-    token = request.headers.get("X-Kitesim-Managed-Token", "").strip()
+def _managed_accounts_from_request() -> list[KitesimAccount]:
+    encoded_accounts = request.headers.get("X-Kitesim-Managed-Accounts", "").strip()
     timestamp = request.headers.get("X-Kitesim-Managed-Timestamp", "").strip()
     signature = request.headers.get("X-Kitesim-Managed-Signature", "").strip().lower()
-    supplied = (token, timestamp, signature)
-    if not any(supplied):
-        return ""
+    supplied = (encoded_accounts, timestamp, signature)
 
     bridge_secret = os.getenv("KITESIM_AUTH_BRIDGE_SECRET", "").strip()
     if not all(supplied) or len(bridge_secret) < 24:
-        raise KitesimConfigurationError("动态 Kitesim Token 内部签名配置无效")
-    if not 16 <= len(token) <= 512 or not re.fullmatch(r"[0-9a-f]{64}", signature):
-        raise KitesimConfigurationError("动态 Kitesim Token 内部签名无效")
+        raise KitesimConfigurationError("动态 Kitesim 账户内部签名配置无效")
+    if (
+        len(encoded_accounts.encode("utf-8")) > MAX_MANAGED_ACCOUNTS_HEADER_BYTES
+        or not re.fullmatch(r"[A-Za-z0-9_-]+", encoded_accounts)
+        or not re.fullmatch(r"[0-9a-f]{64}", signature)
+    ):
+        raise KitesimConfigurationError("动态 Kitesim 账户内部签名无效")
     try:
         issued_at = int(timestamp)
     except ValueError as exc:
-        raise KitesimConfigurationError("动态 Kitesim Token 内部签名无效") from exc
+        raise KitesimConfigurationError("动态 Kitesim 账户内部签名无效") from exc
     if abs(int(time.time()) - issued_at) > MANAGED_TOKEN_MAX_SKEW_SECONDS:
-        raise KitesimConfigurationError("动态 Kitesim Token 内部签名已过期")
+        raise KitesimConfigurationError("动态 Kitesim 账户内部签名已过期")
 
     expected = hmac.new(
         bridge_secret.encode("utf-8"),
-        f"{timestamp}\n{token}".encode("utf-8"),
+        f"{timestamp}\n{encoded_accounts}".encode("utf-8"),
         "sha256",
     ).hexdigest()
     if not hmac.compare_digest(signature, expected):
-        raise KitesimConfigurationError("动态 Kitesim Token 内部签名无效")
-    return token
+        raise KitesimConfigurationError("动态 Kitesim 账户内部签名无效")
+
+    try:
+        padding = "=" * (-len(encoded_accounts) % 4)
+        decoded = base64.urlsafe_b64decode(encoded_accounts + padding)
+        payload = json.loads(decoded.decode("utf-8"))
+    except (ValueError, binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise KitesimConfigurationError("动态 Kitesim 账户载荷无效") from exc
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        raise KitesimConfigurationError("动态 Kitesim 账户载荷无效")
+    accounts = payload.get("accounts")
+    if not isinstance(accounts, list):
+        raise KitesimConfigurationError("动态 Kitesim 账户载荷无效")
+    return load_managed_kitesim_accounts(accounts)
 
 
 def _kitesim_accounts() -> list[KitesimAccount]:
-    managed_token = _managed_token_from_request()
-    return load_kitesim_accounts(
-        os.environ,
-        signer_secret=_access_key(),
-        primary_token=managed_token,
-        primary_label=os.getenv("KITESIM_TOKEN_NAME_1", ""),
-    )
+    return _managed_accounts_from_request()
 
 
 def _kitesim_client(account: KitesimAccount, *, timeout_cap: float = 25.0) -> KitesimClient:
@@ -367,32 +380,36 @@ def create_api_blueprint() -> Blueprint:
             elif len(accounts) == 1:
                 account = accounts[0]
             else:
-                return _error("多 Token 模式必须提供 accountId", 400, "validation")
+                return _error("多账户模式必须提供 accountId", 400, "validation")
 
             if len(accounts) > 1 and not message_handle:
-                return _error("多 Token 模式必须提供 messageHandle", 400, "validation")
+                return _error("多账户模式必须提供 messageHandle", 400, "validation")
             if message_handle and not verify_message_handle(
                 account,
                 order_id=order_id,
                 phone_number=phone_number,
                 supplied_handle=message_handle,
             ):
-                return _error("号码与 Token 账户不匹配，请重新同步号码", 400, "validation")
+                return _error("号码与登录账户不匹配，请重新同步号码", 400, "validation")
 
             client = _kitesim_client(account)
             sms_data = client.get_phone_sms(order_id, phone_number)
+            total_count = len(normalize_messages(sms_data))
             updated_at = _utc_now()
             if cache_snapshot:
+                items = build_messages(
+                    sms_data,
+                    show_code=True,
+                    show_sms=True,
+                )
                 return jsonify(
                     {
                         "accountId": account.id,
                         "accountLabel": account.label,
-                        "items": build_messages(
-                            sms_data,
-                            show_code=True,
-                            show_sms=True,
-                            limit=20,
-                        ),
+                        "items": items,
+                        "count": len(items),
+                        "totalCount": total_count,
+                        "hasMore": total_count > len(items),
                         "updatedAt": updated_at,
                     }
                 )
@@ -401,12 +418,13 @@ def create_api_blueprint() -> Blueprint:
                 sms_data,
                 show_code=show_code,
                 show_sms=show_sms,
-                limit=20,
             )
             return jsonify(
                 {
                     "items": items,
                     "count": len(items),
+                    "totalCount": total_count,
+                    "hasMore": total_count > len(items),
                     "accountId": account.id,
                     "accountLabel": account.label,
                     "revealCode": show_code,

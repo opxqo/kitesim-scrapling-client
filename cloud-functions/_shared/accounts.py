@@ -1,23 +1,21 @@
-"""Server-only Kitesim account configuration and signed routing identities."""
+"""Validated Kitesim account identities received through the signed internal bridge."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
 import hmac
-import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 
 MAX_KITESIM_ACCOUNTS = 20
-# EdgeOne Makers currently limits each environment-variable value to 500 bytes.
-MAX_TOKEN_CONFIG_BYTES = 500
+ACCOUNT_ID_PATTERN = re.compile(r"^login_(?:[1-9]|1\d|20)$")
 
 
 class KitesimConfigurationError(RuntimeError):
-    """Raised when the server-side multi-account configuration is invalid."""
+    """Raised when the managed account bridge is missing or invalid."""
 
 
 @dataclass(frozen=True)
@@ -32,104 +30,44 @@ def _clean_account_label(value: Any) -> str:
     return re.sub(r"\s+", " ", label).strip()[:40]
 
 
-def _parse_multi_token_config(raw: str) -> list[tuple[str, str]]:
-    raw = raw.strip()
-    if not raw:
-        return []
-    if len(raw.encode("utf-8")) > MAX_TOKEN_CONFIG_BYTES:
-        raise KitesimConfigurationError(
-            "KITESIM_TOKENS 超过 EdgeOne 单变量 500 字节限制，请改用 KITESIM_TOKEN_1 等分项变量"
-        )
+def load_managed_kitesim_accounts(specs: Iterable[Mapping[str, Any]]) -> list[KitesimAccount]:
+    """Validate accounts from the HMAC-protected Node-to-Python bridge.
 
-    parsed_entries: list[Any]
-    if raw.startswith("["):
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise KitesimConfigurationError("KITESIM_TOKENS 不是有效 JSON") from exc
-        if not isinstance(parsed, list):
-            raise KitesimConfigurationError("KITESIM_TOKENS JSON 必须是数组")
-        parsed_entries = parsed
-    elif raw.startswith("{"):
-        raise KitesimConfigurationError("KITESIM_TOKENS JSON 必须是数组")
-    else:
-        parsed_entries = [part for part in re.split(r"[,;\n]+", raw) if part.strip()]
+    Static token environment variables are intentionally unsupported. Tokens may
+    enter the Python origin only through this short-lived signed payload.
+    """
 
-    specs: list[tuple[str, str]] = []
-    for entry in parsed_entries:
-        if isinstance(entry, str):
-            label = ""
-            token = entry.strip()
-        elif isinstance(entry, dict):
-            label = _clean_account_label(entry.get("name") or entry.get("label"))
-            token = str(entry.get("token") or "").strip()
-        else:
-            raise KitesimConfigurationError("KITESIM_TOKENS 包含不支持的账户项")
-        if not token:
-            raise KitesimConfigurationError("KITESIM_TOKENS 包含空 Token")
-        specs.append((label, token))
-    return specs
-
-
-def _account_id(token: str, signer_secret: str) -> str:
-    secret = (signer_secret or "kitesim-relay").encode("utf-8")
-    digest = hmac.new(secret, token.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
-    return f"acct_{digest}"
-
-
-def load_kitesim_accounts(
-    environment: Mapping[str, str],
-    *,
-    signer_secret: str,
-    primary_token: str = "",
-    primary_label: str = "",
-) -> list[KitesimAccount]:
-    """Load, merge and de-duplicate all supported server-side token variables."""
-
-    managed_token = primary_token.strip()
-    if managed_token:
-        specs = [(_clean_account_label(primary_label), managed_token)]
-        first_numbered_index = 2
-    else:
-        specs = _parse_multi_token_config(environment.get("KITESIM_TOKENS", ""))
-        first_numbered_index = 1
-
-    for index in range(first_numbered_index, MAX_KITESIM_ACCOUNTS + 1):
-        token = environment.get(f"KITESIM_TOKEN_{index}", "").strip()
-        if not token:
-            continue
-        label = _clean_account_label(environment.get(f"KITESIM_TOKEN_NAME_{index}", ""))
-        specs.append((label, token))
-
-    if not managed_token:
-        legacy_token = environment.get("KITESIM_TOKEN", "").strip()
-        if legacy_token:
-            specs.append(("默认账户" if not specs else "兼容账户", legacy_token))
-
-    unique_specs: list[tuple[str, str]] = []
-    seen_tokens: set[str] = set()
-    for label, token in specs:
-        if token in seen_tokens:
-            continue
-        seen_tokens.add(token)
-        unique_specs.append((label, token))
-
-    if not unique_specs:
-        raise KitesimConfigurationError(
-            "服务端尚未配置 KITESIM_TOKEN、KITESIM_TOKENS 或 KITESIM_TOKEN_1"
-        )
-    if len(unique_specs) > MAX_KITESIM_ACCOUNTS:
+    entries = list(specs)
+    if not entries:
+        raise KitesimConfigurationError("尚无已登录的 Kitesim 账户，请先在后台完成验证码登录")
+    if len(entries) > MAX_KITESIM_ACCOUNTS:
         raise KitesimConfigurationError(f"最多支持 {MAX_KITESIM_ACCOUNTS} 个 Kitesim 账户")
 
-    single_account = len(unique_specs) == 1
-    return [
-        KitesimAccount(
-            id=_account_id(token, signer_secret),
-            label=label or ("默认账户" if single_account else f"账户 {index}"),
-            token=token,
+    accounts: list[KitesimAccount] = []
+    seen_ids: set[str] = set()
+    seen_tokens: set[str] = set()
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, Mapping):
+            raise KitesimConfigurationError("动态 Kitesim 账户格式无效")
+        account_id = str(entry.get("accountId") or "").strip()
+        token = str(entry.get("token") or "").strip()
+        label = _clean_account_label(entry.get("label"))
+        if not ACCOUNT_ID_PATTERN.fullmatch(account_id):
+            raise KitesimConfigurationError("动态 Kitesim 账户标识无效")
+        if not 16 <= len(token) <= 512:
+            raise KitesimConfigurationError("动态 Kitesim 账户 Token 无效")
+        if account_id in seen_ids or token in seen_tokens:
+            raise KitesimConfigurationError("动态 Kitesim 账户包含重复项")
+        seen_ids.add(account_id)
+        seen_tokens.add(token)
+        accounts.append(
+            KitesimAccount(
+                id=account_id,
+                label=label or f"账户 {index}",
+                token=token,
+            )
         )
-        for index, (label, token) in enumerate(unique_specs, start=1)
-    ]
+    return accounts
 
 
 def create_message_handle(

@@ -23,6 +23,7 @@ const MESSAGE_ORIGIN_PATH = "/origin/messages-origin"
 const ORDERS_ORIGIN_PATH = "/origin/orders-origin"
 const PHONE_PATTERN = /^\+?\d{6,20}$/
 const PUBLIC_ORIGIN_HOST = "esim.opxqo.cn"
+const LOCAL_ORIGIN_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"])
 
 
 function environmentValue(context, name) {
@@ -136,11 +137,39 @@ function requestHeaders(request, contentType = false, extraHeaders = {}) {
 
 function publicRequestUrl(request) {
   const url = new URL(request.url)
-  // EdgeOne builds request.url from its internal Host and exposes the public route separately.
   const pagesHost = (request.headers.get("eo-pages-host") || "")
     .split(",", 1)[0]
     .trim()
     .toLowerCase()
+  if (url.protocol === "http:" && LOCAL_ORIGIN_HOSTS.has(url.hostname)) {
+    // Makers dev invokes Node on a private worker port and keeps the public dev
+    // router in x-forwarded-host. Route /origin back through that validated
+    // loopback address so the Python function receives the request.
+    const forwardedHost = (request.headers.get("x-forwarded-host") || "")
+      .split(",", 1)[0]
+      .trim()
+      .toLowerCase()
+    const forwardedProto = (request.headers.get("x-forwarded-proto") || "http")
+      .split(",", 1)[0]
+      .trim()
+      .toLowerCase()
+    try {
+      const forwardedUrl = new URL(`${forwardedProto}://${forwardedHost}`)
+      if (
+        ["http:", "https:"].includes(forwardedUrl.protocol)
+        && LOCAL_ORIGIN_HOSTS.has(forwardedUrl.hostname)
+        && !forwardedUrl.username
+        && !forwardedUrl.password
+      ) {
+        url.protocol = forwardedUrl.protocol
+        url.host = forwardedUrl.host
+      }
+    } catch {
+      // Missing or invalid forwarded metadata keeps the already-local URL.
+    }
+    return url
+  }
+  // EdgeOne builds request.url from its internal Host and exposes the public route separately.
   if (pagesHost !== PUBLIC_ORIGIN_HOST) return url
 
   url.protocol = "https:"
@@ -472,6 +501,8 @@ function messageResponse(snapshot, requestPayload, cacheStatus) {
     {
       items,
       count: items.length,
+      totalCount: Number.isInteger(snapshot.totalCount) ? snapshot.totalCount : items.length,
+      hasMore: snapshot.hasMore === true,
       accountId: snapshot.accountId || String(requestPayload.accountId || ""),
       accountLabel: snapshot.accountLabel || "",
       revealCode: requestPayload.revealCode === true,
@@ -489,6 +520,8 @@ function emptyMessageResponse(payload) {
     {
       items: [],
       count: 0,
+      totalCount: 0,
+      hasMore: false,
       accountId: String(payload.accountId || ""),
       accountLabel: "",
       revealCode: payload.revealCode === true,

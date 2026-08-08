@@ -11,15 +11,18 @@ import {
 
 
 const ACCESS_KEY = "dashboard-test-key"
-const LOGIN_EMAIL = "admin@example.com"
 const LOGIN_PASSWORD = "fake-password-123"
-const TOKEN = "managed-kitesim-token-1234567890"
 const ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64")
 const BRIDGE_SECRET = "bridge-secret-at-least-24-characters"
 const NOW = Date.parse("2026-08-08T10:00:00.000Z")
+const ACCOUNTS = [
+  { accountId: "login_1", email: "admin@example.com", hint: "a***n@example.com", token: "managed-primary-token-1234567890" },
+  { accountId: "login_2", email: "backup@example.com", hint: "b***p@example.com", token: "managed-backup-token-1234567890" },
+]
 const BASE_ENV = {
   DASHBOARD_ACCESS_KEY: ACCESS_KEY,
-  KITESIM_LOGIN_EMAIL: LOGIN_EMAIL,
+  KITESIM_LOGIN_EMAIL_1: ACCOUNTS[0].email,
+  KITESIM_LOGIN_EMAIL_2: ACCOUNTS[1].email,
   KITESIM_LOGIN_PASSWORD: LOGIN_PASSWORD,
   KITESIM_AUTH_ENCRYPTION_KEY: ENCRYPTION_KEY,
   KITESIM_AUTH_BRIDGE_SECRET: BRIDGE_SECRET,
@@ -65,24 +68,23 @@ function challengeResponse() {
 }
 
 
-function successfulLoginFetch() {
+function successfulLoginFetch(account) {
   return vi.fn(async (url, options) => {
     if (String(url).endsWith("/index/sign-in")) {
       expect(options.method).toBe("POST")
-      const payload = JSON.parse(String(options.body))
-      expect(payload).toEqual({
-        email: LOGIN_EMAIL,
+      expect(JSON.parse(String(options.body))).toEqual({
+        email: account.email,
         pass: LOGIN_PASSWORD,
         captchaCode: "A7B9",
         captchaKey: "captcha:0123456789abcdef",
       })
-      return new Response(JSON.stringify({ code: 200, message: "ok", data: TOKEN }), {
+      return new Response(JSON.stringify({ code: 200, message: "ok", data: account.token }), {
         status: 200,
       })
     }
     if (String(url).endsWith("/user/info")) {
-      expect(new Headers(options.headers).get("token")).toBe(TOKEN)
-      return new Response(JSON.stringify({ code: 200, data: { email: LOGIN_EMAIL } }), {
+      expect(new Headers(options.headers).get("token")).toBe(account.token)
+      return new Response(JSON.stringify({ code: 200, data: { email: account.email } }), {
         status: 200,
       })
     }
@@ -91,13 +93,37 @@ function successfulLoginFetch() {
 }
 
 
-describe("EdgeOne Kitesim managed login", () => {
+async function loginAccount(store, account) {
+  const handler = createAuthCompleteHandler({
+    fetchImpl: successfulLoginFetch(account),
+    getStoreImpl: () => store,
+    nowImpl: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(12, account.accountId === "login_1" ? 4 : 5),
+  })
+  return handler({
+    request: request("complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accountId: account.accountId,
+        captchaCode: "A7B9",
+        captchaKey: "captcha:0123456789abcdef",
+      }),
+    }),
+    env: BASE_ENV,
+  })
+}
+
+
+describe("EdgeOne Kitesim managed multi-account login", () => {
   it("rejects an invalid dashboard key before touching Kitesim or Blob", async () => {
     const fetchImpl = vi.fn()
     const getStoreImpl = vi.fn()
     const handler = createAuthChallengeHandler({ fetchImpl, getStoreImpl })
     const response = await handler({
-      request: request("challenge", { headers: { "Authorization": "Bearer wrong-key-123" } }),
+      request: request("challenge?accountId=login_1", {
+        headers: { "Authorization": "Bearer wrong-key-123" },
+      }),
       env: BASE_ENV,
     })
 
@@ -107,124 +133,110 @@ describe("EdgeOne Kitesim managed login", () => {
     expect(getStoreImpl).not.toHaveBeenCalled()
   })
 
-  it("reports configuration status without returning credentials", async () => {
-    const handler = createAuthStatusHandler()
-    const response = await handler({
-      request: request("status"),
-      env: { DASHBOARD_ACCESS_KEY: ACCESS_KEY },
-    })
+  it("reports all configured accounts without returning credentials", async () => {
+    const store = new FakeStore()
+    const handler = createAuthStatusHandler({ getStoreImpl: () => store })
+    const response = await handler({ request: request("status"), env: BASE_ENV })
     const payload = await response.json()
 
     expect(response.status).toBe(200)
     expect(payload).toMatchObject({
-      configured: false,
-      credentialsConfigured: false,
-      storageConfigured: false,
-      tokenAvailable: false,
+      configured: true,
+      credentialsConfigured: true,
+      storageConfigured: true,
+      accountCount: 2,
+      readyCount: 0,
     })
-    expect(JSON.stringify(payload)).not.toContain("password")
-    expect(JSON.stringify(payload)).not.toContain("token-123")
+    expect(payload.accounts.map((account) => account.accountId)).toEqual(["login_1", "login_2"])
+    expect(payload.accounts.map((account) => account.emailHint)).toEqual(ACCOUNTS.map((account) => account.hint))
+    const serialized = JSON.stringify(payload)
+    expect(serialized).not.toContain(LOGIN_PASSWORD)
+    expect(serialized).not.toContain(ACCOUNTS[0].email)
+    expect(serialized).not.toContain(ACCOUNTS[0].token)
   })
 
-  it("returns a validated CAPTCHA image and a masked account hint", async () => {
+  it("requires a configured account and returns its masked hint with the CAPTCHA", async () => {
     const fetchImpl = vi.fn(async () => challengeResponse())
     const handler = createAuthChallengeHandler({ fetchImpl })
-    const response = await handler({ request: request("challenge"), env: BASE_ENV })
-    const payload = await response.json()
-
-    expect(response.status).toBe(200)
-    expect(payload.captchaKey).toBe("captcha:0123456789abcdef")
-    expect(payload.captchaImageBase64.length).toBeGreaterThan(100)
-    expect(payload.emailHint).toBe("a***n@example.com")
-    expect(fetchImpl).toHaveBeenCalledWith(
-      "https://api.kitesim.co/index/captcha-image-base64",
-      expect.objectContaining({ method: "GET" }),
-    )
-  })
-
-  it("logs in, verifies the account, and stores only an encrypted token record", async () => {
-    const store = new FakeStore()
-    const fetchImpl = successfulLoginFetch()
-    const handler = createAuthCompleteHandler({
-      fetchImpl,
-      getStoreImpl: () => store,
-      nowImpl: () => NOW,
-      randomBytesImpl: () => Buffer.alloc(12, 4),
-    })
-    const response = await handler({
-      request: request("complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          captchaCode: "A7B9",
-          captchaKey: "captcha:0123456789abcdef",
-        }),
-      }),
+    const invalid = await handler({
+      request: request("challenge?accountId=login_3"),
       env: BASE_ENV,
     })
+    const response = await handler({
+      request: request("challenge?accountId=login_2"),
+      env: BASE_ENV,
+    })
+    const payload = await response.json()
+
+    expect(invalid.status).toBe(400)
+    expect(response.status).toBe(200)
+    expect(payload.accountId).toBe("login_2")
+    expect(payload.captchaKey).toBe("captcha:0123456789abcdef")
+    expect(payload.captchaImageBase64.length).toBeGreaterThan(100)
+    expect(payload.emailHint).toBe(ACCOUNTS[1].hint)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it("logs in one selected account and stores only its encrypted token record", async () => {
+    const store = new FakeStore()
+    const response = await loginAccount(store, ACCOUNTS[1])
     const payload = await response.json()
 
     expect(response.status).toBe(200)
     expect(payload).toEqual({
       ok: true,
+      accountId: "login_2",
       tokenAvailable: true,
       verifiedAt: "2026-08-08T10:00:00.000Z",
-      emailHint: "a***n@example.com",
+      emailHint: ACCOUNTS[1].hint,
     })
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(store.writes).toHaveLength(1)
-    expect(store.writes[0].key).toBe("managed-token/v1.json")
-    expect(store.writes[0].value).toMatchObject({ version: 1, algorithm: "A256GCM" })
+    expect(store.writes[0].key).toBe("managed-token/v2/login_2.json")
+    expect(store.writes[0].value).toMatchObject({ version: 2, algorithm: "A256GCM" })
     expect(store.writes[0].options).toEqual({ cacheControl: "no-store" })
     const serializedRecord = JSON.stringify(store.writes[0].value)
-    expect(serializedRecord).not.toContain(TOKEN)
-    expect(serializedRecord).not.toContain(LOGIN_EMAIL)
+    expect(serializedRecord).not.toContain(ACCOUNTS[1].token)
+    expect(serializedRecord).not.toContain(ACCOUNTS[1].email)
     expect(serializedRecord).not.toContain(LOGIN_PASSWORD)
 
     const statusHandler = createAuthStatusHandler({ getStoreImpl: () => store })
     const statusResponse = await statusHandler({ request: request("status"), env: BASE_ENV })
-    expect(await statusResponse.json()).toMatchObject({
-      configured: true,
+    const status = await statusResponse.json()
+    expect(status.readyCount).toBe(1)
+    expect(status.accounts.find((account) => account.accountId === "login_2")).toMatchObject({
       tokenAvailable: true,
       verifiedAt: "2026-08-08T10:00:00.000Z",
     })
   })
 
-  it("creates a short-lived signed bridge header only after decrypting Blob", async () => {
+  it("creates one short-lived signed bridge containing all decrypted accounts", async () => {
     const store = new FakeStore()
-    const loginHandler = createAuthCompleteHandler({
-      fetchImpl: successfulLoginFetch(),
-      getStoreImpl: () => store,
-      nowImpl: () => NOW,
-      randomBytesImpl: () => Buffer.alloc(12, 4),
-    })
-    await loginHandler({
-      request: request("complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          captchaCode: "A7B9",
-          captchaKey: "captcha:0123456789abcdef",
-        }),
-      }),
-      env: BASE_ENV,
-    })
+    await loginAccount(store, ACCOUNTS[0])
+    await loginAccount(store, ACCOUNTS[1])
 
     const headers = await createManagedTokenBridgeHeaders(
       { env: BASE_ENV },
       { getStoreImpl: () => store, nowImpl: () => NOW },
     )
     const timestamp = String(Math.floor(NOW / 1000))
+    const encoded = headers["X-Kitesim-Managed-Accounts"]
     const expectedSignature = createHmac("sha256", BRIDGE_SECRET)
-      .update(`${timestamp}\n${TOKEN}`, "utf8")
+      .update(`${timestamp}\n${encoded}`, "utf8")
       .digest("hex")
+    const bridge = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"))
 
-    expect(headers).toEqual({
-      "X-Kitesim-Managed-Token": TOKEN,
-      "X-Kitesim-Managed-Timestamp": timestamp,
-      "X-Kitesim-Managed-Signature": expectedSignature,
+    expect(headers["X-Kitesim-Managed-Timestamp"]).toBe(timestamp)
+    expect(headers["X-Kitesim-Managed-Signature"]).toBe(expectedSignature)
+    expect(headers["X-Kitesim-Managed-Token"]).toBeUndefined()
+    expect(bridge).toEqual({
+      version: 1,
+      accounts: ACCOUNTS.map((account) => ({
+        accountId: account.accountId,
+        label: account.hint,
+        token: account.token,
+      })),
     })
-    expect(store.reads.at(-1)?.options).toMatchObject({ consistency: "strong" })
+    expect(store.reads.every((read) => read.options.consistency === "strong")).toBe(true)
   })
 
   it("does not store a token when the CAPTCHA fails", async () => {
@@ -239,6 +251,7 @@ describe("EdgeOne Kitesim managed login", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          accountId: "login_1",
           captchaCode: "A7B9",
           captchaKey: "captcha:0123456789abcdef",
         }),
@@ -255,7 +268,7 @@ describe("EdgeOne Kitesim managed login", () => {
     const store = new FakeStore()
     const fetchImpl = vi.fn(async (url) => {
       if (String(url).endsWith("/index/sign-in")) {
-        return new Response(JSON.stringify({ code: 200, data: TOKEN }), { status: 200 })
+        return new Response(JSON.stringify({ code: 200, data: ACCOUNTS[0].token }), { status: 200 })
       }
       return new Response(JSON.stringify({ code: 200, data: { email: "other@example.com" } }), {
         status: 200,
@@ -267,6 +280,7 @@ describe("EdgeOne Kitesim managed login", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          accountId: "login_1",
           captchaCode: "A7B9",
           captchaKey: "captcha:0123456789abcdef",
         }),

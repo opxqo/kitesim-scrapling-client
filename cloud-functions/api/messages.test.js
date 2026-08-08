@@ -1,4 +1,4 @@
-import { createCipheriv, createHmac } from "node:crypto"
+import { createCipheriv, createHash, createHmac } from "node:crypto"
 
 import { describe, expect, it, vi } from "vitest"
 
@@ -160,8 +160,8 @@ function legacyEnvelope(record, encodedKey, objectKey) {
 }
 
 
-function managedTokenEnvelope(token, encodedKey) {
-  const objectKey = "managed-token/v1.json"
+function managedTokenEnvelope(token, encodedKey, accountId, email) {
+  const objectKey = `managed-token/v2/${accountId}.json`
   const iv = Buffer.alloc(12, 4)
   const cipher = createCipheriv("aes-256-gcm", Buffer.from(encodedKey, "base64"), iv)
   cipher.setAAD(Buffer.from(objectKey, "utf8"))
@@ -170,11 +170,12 @@ function managedTokenEnvelope(token, encodedKey) {
     cipher.final(),
   ])
   return {
-    version: 1,
+    version: 2,
     algorithm: "A256GCM",
     iv: iv.toString("base64"),
     tag: cipher.getAuthTag().toString("base64"),
     ciphertext: ciphertext.toString("base64"),
+    emailHash: createHash("sha256").update(email, "utf8").digest("hex"),
     verifiedAt: "2026-08-08T10:00:00.000Z",
   }
 }
@@ -727,24 +728,34 @@ describe("EdgeOne orders Blob snapshot", () => {
     expect(getAuthStoreImpl).not.toHaveBeenCalled()
   })
 
-  it("forwards a decrypted managed token with an HMAC signature only on refresh", async () => {
+  it("forwards decrypted managed accounts with an HMAC signature only on refresh", async () => {
     const cacheStore = new FakeStore()
     const authStore = new FakeStore()
     const managedToken = "managed-kitesim-token-1234567890"
+    const loginEmail = "admin@example.com"
     const bridgeSecret = "bridge-secret-at-least-24-characters"
     const now = 5_000_000
     authStore.objects.set(
-      "managed-token/v1.json",
-      managedTokenEnvelope(managedToken, ENCRYPTION_KEY),
+      "managed-token/v2/login_1.json",
+      managedTokenEnvelope(managedToken, ENCRYPTION_KEY, "login_1", loginEmail),
     )
     const fetchImpl = vi.fn(async (_url, options) => {
       const headers = new Headers(options.headers)
       const timestamp = String(Math.floor(now / 1000))
-      expect(headers.get("X-Kitesim-Managed-Token")).toBe(managedToken)
+      const encoded = headers.get("X-Kitesim-Managed-Accounts")
+      expect(encoded).toBeTruthy()
+      expect(JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"))).toEqual({
+        version: 1,
+        accounts: [{
+          accountId: "login_1",
+          label: "a***n@example.com",
+          token: managedToken,
+        }],
+      })
       expect(headers.get("X-Kitesim-Managed-Timestamp")).toBe(timestamp)
       expect(headers.get("X-Kitesim-Managed-Signature")).toBe(
         createHmac("sha256", bridgeSecret)
-          .update(`${timestamp}\n${managedToken}`, "utf8")
+          .update(`${timestamp}\n${encoded}`, "utf8")
           .digest("hex"),
       )
       return new Response(JSON.stringify(ORDERS_SNAPSHOT), { status: 200 })
@@ -758,6 +769,8 @@ describe("EdgeOne orders Blob snapshot", () => {
     })
     const env = {
       ...BASE_ENV,
+      KITESIM_LOGIN_EMAIL_1: loginEmail,
+      KITESIM_LOGIN_PASSWORD: "fake-password-123",
       KITESIM_AUTH_ENCRYPTION_KEY: ENCRYPTION_KEY,
       KITESIM_AUTH_BRIDGE_SECRET: bridgeSecret,
     }
@@ -854,6 +867,36 @@ describe("EdgeOne orders Blob snapshot", () => {
           "Authorization": `Bearer ${ACCESS_KEY}`,
           "eo-pages-host": "esim.opxqo.cn",
           "x-forwarded-proto": "https",
+        },
+      },
+    )
+
+    const response = await handler({ request, env: BASE_ENV })
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get("X-SMS-Cache")).toBe("refreshed")
+  })
+
+  it("routes local Makers refreshes from the Node worker back through the public dev port", async () => {
+    const store = new FakeStore()
+    const fetchImpl = vi.fn(async (url) => {
+      expect(String(url)).toBe(
+        "http://127.0.0.1:8088/origin/orders-origin?status=2&limit=20",
+      )
+      return new Response(JSON.stringify(ORDERS_SNAPSHOT), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    })
+    const handler = createOrdersCacheHandler({ fetchImpl, getStoreImpl: () => store })
+    const request = new Request(
+      "http://localhost:9000/api/orders?status=2&limit=20&refresh=1",
+      {
+        headers: {
+          "Authorization": `Bearer ${ACCESS_KEY}`,
+          "x-forwarded-host": "127.0.0.1:8088",
+          "x-forwarded-port": "8088",
+          "x-forwarded-proto": "http",
         },
       },
     )
