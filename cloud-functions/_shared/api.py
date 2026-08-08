@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import wraps
@@ -32,6 +33,7 @@ from .kitesim import (
 
 ACCESS_KEY_MIN_LENGTH = 12
 MAX_ALL_STATUS_ACCOUNTS = 8
+MANAGED_TOKEN_MAX_SKEW_SECONDS = 120
 PHONE_PATTERN = re.compile(r"^\+?\d{6,20}$")
 
 
@@ -73,8 +75,44 @@ def _protected(view: Callable[..., Any]) -> Callable[..., Any]:
     return wrapped
 
 
+def _managed_token_from_request() -> str:
+    token = request.headers.get("X-Kitesim-Managed-Token", "").strip()
+    timestamp = request.headers.get("X-Kitesim-Managed-Timestamp", "").strip()
+    signature = request.headers.get("X-Kitesim-Managed-Signature", "").strip().lower()
+    supplied = (token, timestamp, signature)
+    if not any(supplied):
+        return ""
+
+    bridge_secret = os.getenv("KITESIM_AUTH_BRIDGE_SECRET", "").strip()
+    if not all(supplied) or len(bridge_secret) < 24:
+        raise KitesimConfigurationError("动态 Kitesim Token 内部签名配置无效")
+    if not 16 <= len(token) <= 512 or not re.fullmatch(r"[0-9a-f]{64}", signature):
+        raise KitesimConfigurationError("动态 Kitesim Token 内部签名无效")
+    try:
+        issued_at = int(timestamp)
+    except ValueError as exc:
+        raise KitesimConfigurationError("动态 Kitesim Token 内部签名无效") from exc
+    if abs(int(time.time()) - issued_at) > MANAGED_TOKEN_MAX_SKEW_SECONDS:
+        raise KitesimConfigurationError("动态 Kitesim Token 内部签名已过期")
+
+    expected = hmac.new(
+        bridge_secret.encode("utf-8"),
+        f"{timestamp}\n{token}".encode("utf-8"),
+        "sha256",
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise KitesimConfigurationError("动态 Kitesim Token 内部签名无效")
+    return token
+
+
 def _kitesim_accounts() -> list[KitesimAccount]:
-    return load_kitesim_accounts(os.environ, signer_secret=_access_key())
+    managed_token = _managed_token_from_request()
+    return load_kitesim_accounts(
+        os.environ,
+        signer_secret=_access_key(),
+        primary_token=managed_token,
+        primary_label=os.getenv("KITESIM_TOKEN_NAME_1", ""),
+    )
 
 
 def _kitesim_client(account: KitesimAccount, *, timeout_cap: float = 25.0) -> KitesimClient:

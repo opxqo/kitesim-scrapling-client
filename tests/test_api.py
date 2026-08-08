@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import sys
+import hmac
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -199,6 +201,73 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["items"][0]["phoneNumber"], "+15551234567")
         self.assertEqual(response.headers["Cache-Control"], "no-store, max-age=0")
+
+    def test_signed_managed_token_replaces_first_static_account_only(self) -> None:
+        bridge_secret = "bridge-secret-at-least-24-characters"
+        managed_token = "token-primary-test"
+        timestamp = str(int(time.time()))
+        signature = hmac.new(
+            bridge_secret.encode("utf-8"),
+            f"{timestamp}\n{managed_token}".encode("utf-8"),
+            "sha256",
+        ).hexdigest()
+        headers = {
+            **AUTH_HEADERS,
+            "X-Kitesim-Managed-Token": managed_token,
+            "X-Kitesim-Managed-Timestamp": timestamp,
+            "X-Kitesim-Managed-Signature": signature,
+        }
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "KITESIM_AUTH_BRIDGE_SECRET": bridge_secret,
+                    "KITESIM_TOKEN": "legacy-token-must-be-ignored",
+                    "KITESIM_TOKENS": '[{"name":"broken","token":"ignored-multi-token"}]',
+                    "KITESIM_TOKEN_1": "static-first-token-must-be-ignored",
+                    "KITESIM_TOKEN_NAME_1": "管理员账户",
+                    "KITESIM_TOKEN_2": "token-secondary-test",
+                    "KITESIM_TOKEN_NAME_2": "备用号码",
+                },
+                clear=False,
+            ),
+            patch.object(api_module, "KitesimClient", MultiAccountFakeClient),
+        ):
+            response = self.client.get("/api/orders-origin?status=2&limit=20", headers=headers)
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["accountCount"], 2)
+        self.assertEqual(
+            [item["accountLabel"] for item in payload["items"]],
+            ["管理员账户", "备用号码"],
+        )
+        serialized = response.get_data(as_text=True)
+        self.assertNotIn(managed_token, serialized)
+        self.assertNotIn("static-first-token-must-be-ignored", serialized)
+
+    def test_invalid_managed_token_signature_is_rejected_before_upstream_access(self) -> None:
+        with (
+            patch.dict(
+                os.environ,
+                {"KITESIM_AUTH_BRIDGE_SECRET": "bridge-secret-at-least-24-characters"},
+                clear=False,
+            ),
+            patch.object(api_module, "KitesimClient") as client_class,
+        ):
+            response = self.client.get(
+                "/api/orders-origin?status=2",
+                headers={
+                    **AUTH_HEADERS,
+                    "X-Kitesim-Managed-Token": "managed-token-at-least-16-chars",
+                    "X-Kitesim-Managed-Timestamp": str(int(time.time())),
+                    "X-Kitesim-Managed-Signature": "0" * 64,
+                },
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["kind"], "configuration")
+        client_class.assert_not_called()
 
     def test_orders_aggregates_multiple_token_accounts_without_exposing_tokens(self) -> None:
         configured_tokens = (

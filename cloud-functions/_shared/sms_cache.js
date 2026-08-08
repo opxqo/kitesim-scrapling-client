@@ -6,6 +6,8 @@ import {
 
 import { getStore } from "@edgeone/pages-blob"
 
+import { createManagedTokenBridgeHeaders } from "./kitesim_auth.js"
+
 
 const ACCESS_KEY_MIN_LENGTH = 12
 const CACHE_ENVELOPE_VERSION = 1
@@ -118,13 +120,16 @@ function cacheWarning(logger, operation, error) {
 }
 
 
-function requestHeaders(request, contentType = false) {
+function requestHeaders(request, contentType = false, extraHeaders = {}) {
   const headers = new Headers({ "Accept": "application/json" })
   if (contentType) headers.set("Content-Type", "application/json")
   const authorization = request.headers.get("Authorization")
   const dashboardKey = request.headers.get("X-Dashboard-Key")
   if (authorization) headers.set("Authorization", authorization)
   if (dashboardKey) headers.set("X-Dashboard-Key", dashboardKey)
+  for (const [name, value] of Object.entries(extraHeaders)) {
+    if (value) headers.set(name, String(value))
+  }
   return headers
 }
 
@@ -496,7 +501,7 @@ function emptyMessageResponse(payload) {
 }
 
 
-async function fetchMessageSnapshot(request, payload, fetchImpl, cacheStatus) {
+async function fetchMessageSnapshot(request, payload, fetchImpl, cacheStatus, extraHeaders = {}) {
   const originUrl = publicRequestUrl(request)
   originUrl.pathname = MESSAGE_ORIGIN_PATH
   originUrl.search = ""
@@ -508,7 +513,7 @@ async function fetchMessageSnapshot(request, payload, fetchImpl, cacheStatus) {
     originUrl,
     {
       method: "POST",
-      headers: requestHeaders(request, true),
+      headers: requestHeaders(request, true, extraHeaders),
       body: JSON.stringify(originPayload),
     },
     cacheStatus,
@@ -558,7 +563,18 @@ export function createSmsCacheHandler(dependencies = {}) {
     const refresh = payload.refresh === true
 
     if (refresh) {
-      const origin = await fetchMessageSnapshot(request, payload, fetchImpl, "refresh")
+      const managedTokenHeaders = await createManagedTokenBridgeHeaders(context, {
+        getStoreImpl: dependencies.getAuthStoreImpl || getStoreImpl,
+        nowImpl,
+        logger,
+      })
+      const origin = await fetchMessageSnapshot(
+        request,
+        payload,
+        fetchImpl,
+        "refresh",
+        managedTokenHeaders,
+      )
       if (!origin.ok) return origin.response
       if (!validMessageSnapshot(origin.payload)) {
         return errorResponse("短信回源快照格式无效", 502, "upstream", "refresh")
@@ -643,7 +659,7 @@ function emptyOrdersResponse(query) {
 }
 
 
-async function fetchOrdersSnapshot(request, query, fetchImpl, cacheStatus) {
+async function fetchOrdersSnapshot(request, query, fetchImpl, cacheStatus, extraHeaders = {}) {
   const originUrl = publicRequestUrl(request)
   originUrl.pathname = ORDERS_ORIGIN_PATH
   originUrl.search = ""
@@ -653,7 +669,7 @@ async function fetchOrdersSnapshot(request, query, fetchImpl, cacheStatus) {
   return fetchJson(
     fetchImpl,
     originUrl,
-    { method: "GET", headers: requestHeaders(request) },
+    { method: "GET", headers: requestHeaders(request, false, extraHeaders) },
     cacheStatus,
   )
 }
@@ -683,7 +699,18 @@ export function createOrdersCacheHandler(dependencies = {}) {
     const ttlSeconds = cacheTtlSeconds(context)
 
     if (query.refresh) {
-      const origin = await fetchOrdersSnapshot(request, query, fetchImpl, "refresh")
+      const managedTokenHeaders = await createManagedTokenBridgeHeaders(context, {
+        getStoreImpl: dependencies.getAuthStoreImpl || getStoreImpl,
+        nowImpl,
+        logger,
+      })
+      const origin = await fetchOrdersSnapshot(
+        request,
+        query,
+        fetchImpl,
+        "refresh",
+        managedTokenHeaders,
+      )
       if (!origin.ok) return origin.response
       if (!validOrdersSnapshot(origin.payload)) {
         return errorResponse("号码回源快照格式无效", 502, "upstream", "refresh")

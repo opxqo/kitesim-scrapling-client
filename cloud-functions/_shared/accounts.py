@@ -81,21 +81,30 @@ def load_kitesim_accounts(
     environment: Mapping[str, str],
     *,
     signer_secret: str,
+    primary_token: str = "",
+    primary_label: str = "",
 ) -> list[KitesimAccount]:
     """Load, merge and de-duplicate all supported server-side token variables."""
 
-    specs = _parse_multi_token_config(environment.get("KITESIM_TOKENS", ""))
+    managed_token = primary_token.strip()
+    if managed_token:
+        specs = [(_clean_account_label(primary_label), managed_token)]
+        first_numbered_index = 2
+    else:
+        specs = _parse_multi_token_config(environment.get("KITESIM_TOKENS", ""))
+        first_numbered_index = 1
 
-    for index in range(1, MAX_KITESIM_ACCOUNTS + 1):
+    for index in range(first_numbered_index, MAX_KITESIM_ACCOUNTS + 1):
         token = environment.get(f"KITESIM_TOKEN_{index}", "").strip()
         if not token:
             continue
         label = _clean_account_label(environment.get(f"KITESIM_TOKEN_NAME_{index}", ""))
         specs.append((label, token))
 
-    legacy_token = environment.get("KITESIM_TOKEN", "").strip()
-    if legacy_token:
-        specs.append(("默认账户" if not specs else "兼容账户", legacy_token))
+    if not managed_token:
+        legacy_token = environment.get("KITESIM_TOKEN", "").strip()
+        if legacy_token:
+            specs.append(("默认账户" if not specs else "兼容账户", legacy_token))
 
     unique_specs: list[tuple[str, str]] = []
     seen_tokens: set[str] = set()

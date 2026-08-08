@@ -19,6 +19,7 @@ import {
 } from "lucide-react"
 
 import { AppMark } from "@/components/app-mark"
+import { TokenManager } from "@/components/token-manager"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -967,6 +968,7 @@ export function DashboardShell({ dashboard }: { dashboard: DashboardController }
         <ViewHeading dashboard={dashboard} />
         <div className="space-y-3">
           <MetricStrip dashboard={dashboard} />
+          <TokenManager dashboard={dashboard} />
           {dashboard.warnings.length > 0 && (
             <Alert className="border-amber-200 bg-amber-50 text-amber-900">
               <AlertTriangle />

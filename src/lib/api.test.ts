@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { getMessages, getOrders } from "./api"
+import {
+  completeKitesimAuth,
+  getKitesimAuthChallenge,
+  getKitesimAuthStatus,
+  getMessages,
+  getOrders,
+} from "./api"
 import type { KitesimOrder } from "@/types"
 
 const order: KitesimOrder = {
@@ -61,5 +67,30 @@ describe("dashboard cache request intent", () => {
     const visibleBody = JSON.parse(String(fetchMock.mock.calls[1][1]?.body))
     expect(maskedBody).toMatchObject({ revealCode: false, showSms: false, refresh: false })
     expect(visibleBody).toMatchObject({ revealCode: true, showSms: true, refresh: false })
+  })
+
+  it("uses protected same-origin routes for the managed Kitesim login", async () => {
+    await getKitesimAuthStatus("dashboard-test-key")
+    await getKitesimAuthChallenge("dashboard-test-key")
+    await completeKitesimAuth("dashboard-test-key", {
+      captchaCode: "A7B9",
+      captchaKey: "captcha:0123456789abcdef",
+    })
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/auth/status",
+      "/api/auth/challenge",
+      "/api/auth/complete",
+    ])
+    for (const [, options] of fetchMock.mock.calls) {
+      expect(new Headers(options?.headers).get("Authorization")).toBe("Bearer dashboard-test-key")
+    }
+    expect(fetchMock.mock.calls[0][1]?.method).toBeUndefined()
+    expect(fetchMock.mock.calls[1][1]?.method).toBeUndefined()
+    expect(fetchMock.mock.calls[2][1]?.method).toBe("POST")
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({
+      captchaCode: "A7B9",
+      captchaKey: "captcha:0123456789abcdef",
+    })
   })
 })

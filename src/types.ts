@@ -55,6 +55,29 @@ export type SessionResponse = {
   verifiedAt: string
 }
 
+export type KitesimAuthStatus = {
+  ok: boolean
+  configured: boolean
+  credentialsConfigured: boolean
+  storageConfigured: boolean
+  tokenAvailable: boolean
+  verifiedAt: string
+  emailHint: string
+}
+
+export type KitesimAuthChallenge = {
+  captchaKey: string
+  captchaImageBase64: string
+  emailHint: string
+}
+
+export type KitesimAuthComplete = {
+  ok: boolean
+  tokenAvailable: boolean
+  verifiedAt: string
+  emailHint: string
+}
+
 export type OrdersResponse = {
   items: KitesimOrder[]
   count: number

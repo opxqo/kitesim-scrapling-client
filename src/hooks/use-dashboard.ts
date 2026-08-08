@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
-import { ApiError, copyText, getHealth, getMessages, getOrders, verifySession } from "@/lib/api"
+import {
+  ApiError,
+  completeKitesimAuth,
+  copyText,
+  getHealth,
+  getKitesimAuthChallenge,
+  getKitesimAuthStatus,
+  getMessages,
+  getOrders,
+  verifySession,
+} from "@/lib/api"
 import {
   firstCodeRecord,
   isCodeRevealed,
@@ -748,6 +758,24 @@ export function useDashboard() {
     if (!privacyMasked && isCodeRevealed(code)) void copyValue(code, "验证码")
   }, [copyValue, messages, privacyMasked])
 
+  const readKitesimAuthStatus = useCallback(() => {
+    const accessKey = accessKeyRef.current
+    if (!accessKey) throw new ApiError("工作台尚未解锁", 401, "dashboard_auth")
+    return getKitesimAuthStatus(accessKey)
+  }, [])
+
+  const requestKitesimAuthChallenge = useCallback(() => {
+    const accessKey = accessKeyRef.current
+    if (!accessKey) throw new ApiError("工作台尚未解锁", 401, "dashboard_auth")
+    return getKitesimAuthChallenge(accessKey)
+  }, [])
+
+  const submitKitesimAuthChallenge = useCallback((captchaCode: string, captchaKey: string) => {
+    const accessKey = accessKeyRef.current
+    if (!accessKey) throw new ApiError("工作台尚未解锁", 401, "dashboard_auth")
+    return completeKitesimAuth(accessKey, { captchaCode, captchaKey })
+  }, [])
+
   return {
     health,
     healthError,
@@ -787,6 +815,9 @@ export function useDashboard() {
     selectOrder,
     copyValue,
     copyLatestCode,
+    readKitesimAuthStatus,
+    requestKitesimAuthChallenge,
+    submitKitesimAuthChallenge,
   }
 }
 

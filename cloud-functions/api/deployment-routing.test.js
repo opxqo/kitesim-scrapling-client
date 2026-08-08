@@ -13,6 +13,9 @@ const PUBLIC_NODE_HANDLERS = [
   PUBLIC_SESSION_HANDLER,
   fileURLToPath(new URL("./orders.js", import.meta.url)),
   fileURLToPath(new URL("./messages.js", import.meta.url)),
+  fileURLToPath(new URL("./auth/status.js", import.meta.url)),
+  fileURLToPath(new URL("./auth/challenge.js", import.meta.url)),
+  fileURLToPath(new URL("./auth/complete.js", import.meta.url)),
 ]
 
 
