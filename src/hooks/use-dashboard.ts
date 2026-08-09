@@ -10,6 +10,7 @@ import {
   getKitesimAuthStatus,
   getMessages,
   getOrders,
+  maintainKitesimAuth,
   verifySession,
 } from "@/lib/api"
 import {
@@ -790,6 +791,12 @@ export function useDashboard() {
     return completeKitesimAuth(accessKey, { accountId, captchaCode, captchaKey })
   }, [])
 
+  const runKitesimAuthMaintenance = useCallback(() => {
+    const accessKey = accessKeyRef.current
+    if (!accessKey) throw new ApiError("工作台尚未解锁", 401, "dashboard_auth")
+    return maintainKitesimAuth(accessKey)
+  }, [])
+
   return {
     health,
     healthError,
@@ -834,6 +841,7 @@ export function useDashboard() {
     readKitesimAuthStatus,
     requestKitesimAuthChallenge,
     submitKitesimAuthChallenge,
+    runKitesimAuthMaintenance,
   }
 }
 

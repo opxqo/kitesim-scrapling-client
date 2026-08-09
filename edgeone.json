@@ -49,8 +49,23 @@
     }
   ],
   "cloudFunctions": {
+    "nodejs": {
+      "maxDuration": 60
+    },
     "python": {
       "maxDuration": 60
     }
-  }
+  },
+  "schedules": [
+    {
+      "cron": "17 3 * * *",
+      "path": "/api/auth/maintain",
+      "method": "POST",
+      "payload": {
+        "source": "edgeone-schedule",
+        "version": 1
+      },
+      "timezone": "Asia/Shanghai"
+    }
+  ]
 }

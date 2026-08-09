@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173",
+    "configure:ai": "node scripts/configure-local-ai.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "lint": "eslint .",

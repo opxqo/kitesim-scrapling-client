@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react"
-import { CheckCircle2, KeyRound, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react"
+import { Bot, CheckCircle2, KeyRound, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -43,12 +43,14 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
   const [loadingStatus, setLoadingStatus] = useState(true)
   const [loadingAccountId, setLoadingAccountId] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [maintaining, setMaintaining] = useState(false)
   const [failure, setFailure] = useState("")
 
   const edgeOneRuntime = dashboard.health?.runtime === "edgeone-node-cloud-function"
   const readStatus = dashboard.readKitesimAuthStatus
   const requestChallenge = dashboard.requestKitesimAuthChallenge
   const submitChallenge = dashboard.submitKitesimAuthChallenge
+  const runMaintenance = dashboard.runKitesimAuthMaintenance
 
   const loadStatus = useCallback(async () => {
     if (!edgeOneRuntime) return
@@ -122,11 +124,31 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
     }
   }
 
+  const maintainTokens = async () => {
+    setMaintaining(true)
+    setFailure("")
+    try {
+      const result = await runMaintenance()
+      setStatus(await readStatus())
+      if (result.failedCount) {
+        toast.warning(`自动维护完成，${result.failedCount} 个账户需要人工接管`)
+      } else if (result.reloggedCount) {
+        toast.success(`AI 已自动更新 ${result.reloggedCount} 个账户的 Token`)
+      } else {
+        toast.success("所有账户 Token 均有效")
+      }
+    } catch (error) {
+      setFailure(errorMessage(error))
+    } finally {
+      setMaintaining(false)
+    }
+  }
+
   if (!edgeOneRuntime) {
     return (
       <Alert>
         <KeyRound />
-        <AlertTitle>半自动登录仅在 EdgeOne Functions 运行</AlertTitle>
+        <AlertTitle>自动登录仅在 EdgeOne Functions 运行</AlertTitle>
         <AlertDescription>
           本地 Flask + Vite 不提供 Blob 认证路由；请使用 <code>edgeone makers dev</code>。
         </AlertDescription>
@@ -136,17 +158,31 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
 
   const readyCount = status?.readyCount ?? 0
   const accountCount = status?.accountCount ?? 0
+  const automationReady = status?.automation?.configured === true
+  const lastMaintenance = status?.automation?.maintenance
 
   return (
     <Card size="sm" className="gap-0 py-0">
       <CardHeader className="border-b py-3">
         <CardTitle>登录状态</CardTitle>
-        <CardDescription className="text-xs">每个账户由管理员人工识别一次图片验证码。</CardDescription>
+        <CardDescription className="text-xs">AI 自动识别验证码并维护 Token；人工输入作为失败兜底。</CardDescription>
         <CardAction>
-          <Badge variant={readyCount > 0 ? "secondary" : "outline"}>
-            {loadingStatus ? <Spinner /> : <ShieldCheck data-icon="inline-start" />}
-            {loadingStatus ? "检查中" : `${readyCount}/${accountCount} 已登录`}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void maintainTokens()}
+              disabled={maintaining || loadingStatus || !automationReady}
+            >
+              {maintaining ? <Spinner /> : <Bot data-icon="inline-start" />}
+              {maintaining ? "维护中" : "立即维护"}
+            </Button>
+            <Badge variant={readyCount > 0 ? "secondary" : "outline"}>
+              {loadingStatus ? <Spinner /> : <ShieldCheck data-icon="inline-start" />}
+              {loadingStatus ? "检查中" : `${readyCount}/${accountCount} 已登录`}
+            </Badge>
+          </div>
         </CardAction>
       </CardHeader>
 
@@ -161,6 +197,16 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
           </Alert>
         )}
 
+        {status?.configured && !automationReady && (
+          <Alert>
+            <Bot />
+            <AlertTitle>AI 自动维护尚未就绪</AlertTitle>
+            <AlertDescription className="text-xs">
+              请启用自动维护，并配置 AI 网关密钥；当前仍可使用下方人工验证码登录。
+            </AlertDescription>
+          </Alert>
+        )}
+
         {failure && (
           <Alert variant="destructive">
             <TriangleAlert />
@@ -171,8 +217,10 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
 
         <Alert>
           <ShieldCheck />
-          <AlertTitle>浏览器不会收到 Kitesim 密码或 Token</AlertTitle>
-          <AlertDescription className="text-xs">登录结果按账户加密保存到服务端 Blob。</AlertDescription>
+          <AlertTitle>模型只会收到验证码图片</AlertTitle>
+          <AlertDescription className="text-xs">
+            账户、密码和 Token 都留在服务端；登录结果按账户加密保存到 Blob。
+          </AlertDescription>
         </Alert>
 
         {loadingStatus && !status ? (
@@ -184,6 +232,9 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
             {status?.accounts.map((account) => {
               const isLoading = loadingAccountId === account.accountId
               const isActive = challenge?.accountId === account.accountId
+              const maintenanceAccount = lastMaintenance?.accounts.find(
+                (item) => item.accountId === account.accountId,
+              )
               return (
                 <Item
                   key={account.accountId}
@@ -197,9 +248,10 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
                   <ItemContent className="min-w-0">
                     <ItemTitle className="max-w-full truncate text-xs">{account.emailHint}</ItemTitle>
                     <ItemDescription className="text-[10px]">
-                      {account.verifiedAt
+                      {maintenanceAccount?.message
+                        || (account.verifiedAt
                         ? `最近验证 ${formatDateTime(account.verifiedAt)}`
-                        : "尚未生成可用登录状态"}
+                        : "尚未生成可用登录状态")}
                     </ItemDescription>
                   </ItemContent>
                   <ItemActions className="md:w-full">
@@ -212,7 +264,7 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
                       disabled={Boolean(loadingAccountId) || submitting || !account.credentialsConfigured}
                     >
                       {isLoading ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
-                      {isActive ? "换一张" : account.tokenAvailable ? "重新登录" : "获取验证码"}
+                      {isActive ? "换一张" : account.tokenAvailable ? "人工重登" : "人工验证码"}
                     </Button>
                   </ItemActions>
                 </Item>
@@ -226,7 +278,7 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
             <Card size="sm" className="gap-0 py-0">
               <CardHeader className="border-b py-2">
                 <CardTitle>图片验证码 · {challenge.emailHint}</CardTitle>
-                <CardDescription className="text-xs">人工识别下图 4 位字符，然后提交登录。</CardDescription>
+                <CardDescription className="text-xs">AI 未完成时，人工识别下图 4 位字符并接管登录。</CardDescription>
               </CardHeader>
               <CardContent className="py-3">
                 <FieldGroup>
@@ -275,7 +327,9 @@ export function TokenManager({ dashboard }: { dashboard: DashboardController }) 
 
       {readyCount > 0 && !challenge && (
         <CardFooter className="text-xs text-muted-foreground">
-          普通读取只访问 Blob；只有手动刷新或已启用的定时刷新会访问 Kitesim。
+          {lastMaintenance?.lastCompletedAt
+            ? `最近自动维护 ${formatDateTime(lastMaintenance.lastCompletedAt)}；普通读取仍只访问 Blob。`
+            : "每日计划任务与显式刷新会维护 Token；普通读取仍只访问 Blob。"}
         </CardFooter>
       )}
     </Card>
