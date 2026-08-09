@@ -16,6 +16,7 @@ const PUBLIC_NODE_HANDLERS = [
   fileURLToPath(new URL("./auth/status.js", import.meta.url)),
   fileURLToPath(new URL("./auth/challenge.js", import.meta.url)),
   fileURLToPath(new URL("./auth/complete.js", import.meta.url)),
+  fileURLToPath(new URL("./auth/maintain.js", import.meta.url)),
 ]
 
 

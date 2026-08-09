@@ -12,6 +12,7 @@ import {
   MessageSquareText,
   Phone,
   RefreshCw,
+  Route,
   Search,
   Server,
   ShieldCheck,
@@ -25,6 +26,14 @@ import { Alert, AlertTitle } from "@/components/ui/alert"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ButtonGroup } from "@/components/ui/button-group"
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb"
 import {
   Card,
   CardAction,
@@ -79,6 +88,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Separator } from "@/components/ui/separator"
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSkeleton,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
@@ -118,7 +147,7 @@ const CACHE_STATUS_LABEL: Record<CacheStatus, string> = {
   bypass: "写入失败",
 }
 
-type MobilePanel = "numbers" | "code" | "messages"
+type MobilePanel = "numbers" | "messages"
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline"
 
 function displayPhone(order: KitesimOrder, masked: boolean) {
@@ -219,21 +248,26 @@ function AccountLoginDialog({ dashboard }: { dashboard: DashboardController }) {
       <Tooltip>
         <TooltipTrigger asChild>
           <DialogTrigger asChild>
-            <Button variant="outline" size="sm" aria-label="管理 Kitesim 账户登录">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full justify-start group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+              aria-label="管理 Kitesim 账户登录"
+            >
               <UserRoundCheck data-icon="inline-start" />
-              <span className="hidden xl:inline">账户登录</span>
-              <Badge variant="secondary">
+              <span className="truncate group-data-[collapsible=icon]:hidden">账户登录</span>
+              <Badge variant="secondary" className="ml-auto group-data-[collapsible=icon]:hidden">
                 {Math.max(0, dashboard.accountCount - dashboard.failedAccountCount)}/{dashboard.accountCount}
               </Badge>
             </Button>
           </DialogTrigger>
         </TooltipTrigger>
-        <TooltipContent>管理 Kitesim 登录与图片验证码</TooltipContent>
+        <TooltipContent>管理 Kitesim 自动登录与 Token</TooltipContent>
       </Tooltip>
       <DialogContent className="w-[calc(100%-1rem)] gap-3 p-3 sm:max-w-3xl">
         <DialogHeader className="pr-8">
           <DialogTitle>Kitesim 账户登录</DialogTitle>
-          <DialogDescription>管理员识别图片验证码后完成登录，Token 仅加密保存在服务端。</DialogDescription>
+          <DialogDescription>AI 自动维护 Token，识别失败时可由管理员输入验证码接管。</DialogDescription>
         </DialogHeader>
         <TokenManager dashboard={dashboard} />
       </DialogContent>
@@ -329,193 +363,217 @@ function WorkspaceHeader({ dashboard }: { dashboard: DashboardController }) {
       : <ShieldCheck data-icon="inline-start" />
 
   return (
-    <header className="flex h-14 shrink-0 items-center border-b bg-background px-3 md:px-4">
-      <div className="flex min-w-0 items-center gap-3">
-        <AppMark />
-        <div className="min-w-0 leading-none">
-          <div className="truncate text-sm font-semibold tracking-tight">Kitesim Relay</div>
-          <span className="mt-1 hidden text-[10px] text-muted-foreground sm:block">多账户号码与验证码工作台</span>
-        </div>
-      </div>
+    <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3 md:px-4">
+      <SidebarTrigger className="-ml-1" />
+      <Separator orientation="vertical" className="data-[orientation=vertical]:h-4" />
+      <Breadcrumb className="min-w-0">
+        <BreadcrumbList className="flex-nowrap">
+          <BreadcrumbItem className="hidden lg:inline-flex">
+            <BreadcrumbPage className="text-muted-foreground">Kitesim Relay</BreadcrumbPage>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator className="hidden lg:block" />
+          <BreadcrumbItem className="min-w-0">
+            <BreadcrumbPage className="truncate font-medium">信号调度台</BreadcrumbPage>
+          </BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <Badge variant={connectionVariant(dashboard.connection.mode)} className="hidden font-normal md:inline-flex">
+        <Badge
+          variant={connectionVariant(dashboard.connection.mode)}
+          className="hidden max-w-48 truncate font-normal min-[1100px]:inline-flex"
+        >
           {connectionIcon}
           {dashboard.connection.text}
         </Badge>
         <AutoRefreshSelect dashboard={dashboard} />
-        <AccountLoginDialog dashboard={dashboard} />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              onClick={() => dashboard.setPrivacyMasked(!dashboard.privacyMasked)}
-              disabled={busy}
-              aria-label={dashboard.privacyMasked ? "显示敏感信息" : "隐藏敏感信息"}
-            >
-              {dashboard.privacyMasked ? <EyeOff data-icon="inline-start" /> : <Eye data-icon="inline-start" />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{dashboard.privacyMasked ? "显示敏感信息" : "恢复隐私遮罩"}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              onClick={() => dashboard.refresh()}
-              disabled={busy}
-              aria-label="刷新全部账户"
-            >
-              {busy ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>从 Kitesim 刷新并回写 Blob</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              className="hidden sm:inline-flex"
-              onClick={() => dashboard.lock()}
-              aria-label="锁定工作台"
-            >
-              <LockKeyhole data-icon="inline-start" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>锁定工作台</TooltipContent>
-        </Tooltip>
+        <ButtonGroup>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                className="hidden sm:inline-flex"
+                onClick={() => dashboard.setPrivacyMasked(!dashboard.privacyMasked)}
+                disabled={busy}
+                aria-label={dashboard.privacyMasked ? "显示敏感信息" : "隐藏敏感信息"}
+              >
+                {dashboard.privacyMasked ? <EyeOff data-icon="inline-start" /> : <Eye data-icon="inline-start" />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{dashboard.privacyMasked ? "显示敏感信息" : "恢复隐私遮罩"}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                onClick={() => dashboard.refresh()}
+                disabled={busy}
+                aria-label="刷新全部账户"
+              >
+                {busy ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>从 Kitesim 刷新并回写 Blob</TooltipContent>
+          </Tooltip>
+        </ButtonGroup>
       </div>
     </header>
   )
 }
 
-function CommandStrip({ dashboard }: { dashboard: DashboardController }) {
+function SidebarDataStatus({ dashboard }: { dashboard: DashboardController }) {
   const successfulAccounts = Math.max(0, dashboard.accountCount - dashboard.failedAccountCount)
   const cacheLabel = dashboard.ordersCacheStatus
     ? CACHE_STATUS_LABEL[dashboard.ordersCacheStatus]
     : "等待读取"
-  const metrics = [
-    { label: "账户", value: `${successfulAccounts}/${dashboard.accountCount}`, icon: Server },
-    { label: "号码", value: String(dashboard.orders.length), icon: Smartphone },
-    { label: "短信", value: String(dashboard.messageTotalCount), icon: Inbox },
-  ]
 
   return (
-    <Item variant="outline" size="sm" className="h-full w-full min-w-0 flex-nowrap bg-card">
-      <ItemMedia variant="icon" className="hidden md:flex">
-        <DatabaseZap />
-      </ItemMedia>
-      <ItemContent className="hidden min-w-0 md:flex">
-        <ItemTitle>
-          信号总控台
-          <Badge variant="outline">{cacheLabel}</Badge>
-        </ItemTitle>
-        <ItemDescription>
-          {dashboard.lastUpdatedAt ? `同步于 ${formatDateTime(dashboard.lastUpdatedAt)}` : "普通读取仅访问 Blob 快照"}
-        </ItemDescription>
-      </ItemContent>
-      <ItemActions className="w-full min-w-0 md:w-auto">
-        <div className="grid w-full min-w-0 grid-cols-3 gap-2">
-          {metrics.map(({ label, value, icon: Icon }) => (
-            <Item key={label} variant="muted" size="xs" className="min-w-0 flex-nowrap">
-              <ItemMedia variant="icon" className="hidden sm:flex">
-                <Icon />
-              </ItemMedia>
-              <ItemContent className="min-w-0">
-                <ItemTitle className="font-mono tabular-nums">{value}</ItemTitle>
-                <ItemDescription className="truncate text-[10px]">{label}</ItemDescription>
-              </ItemContent>
-            </Item>
-          ))}
-        </div>
-      </ItemActions>
-      <Badge variant="secondary" className="hidden xl:inline-flex">
-        <ShieldCheck data-icon="inline-start" />
-        凭据仅服务端可见
-      </Badge>
-    </Item>
+    <SidebarGroup className="mt-auto group-data-[collapsible=icon]:hidden">
+      <SidebarGroupLabel>数据通道</SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild>
+              <div title="普通读取仅访问 Blob 快照">
+                <DatabaseZap />
+                <span>{cacheLabel}</span>
+              </div>
+            </SidebarMenuButton>
+            <SidebarMenuBadge>{dashboard.orders.length}</SidebarMenuBadge>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild>
+              <div title="账户凭据与 Token 仅在服务端处理">
+                <ShieldCheck />
+                <span>服务端凭据隔离</span>
+              </div>
+            </SidebarMenuButton>
+            <SidebarMenuBadge>{successfulAccounts}/{dashboard.accountCount}</SidebarMenuBadge>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   )
 }
 
-function AccountRail({ dashboard }: { dashboard: DashboardController }) {
+function WorkspaceSidebar({ dashboard }: { dashboard: DashboardController }) {
   const groups = useMemo(() => buildAccountGroups(dashboard.orders), [dashboard.orders])
-  const pager = usePagedItems(groups, 6, `${dashboard.status}:${groups.length}`)
   const selectedAccountId = dashboard.selectedOrder?.accountId
+  const { isMobile, setOpenMobile } = useSidebar()
 
   return (
-    <Card size="sm" className="h-full min-h-0 min-w-0 gap-0 py-0">
-      <CardHeader className="shrink-0 border-b py-3">
-        <CardTitle>账户路由</CardTitle>
-        <CardDescription className="text-xs">按登录账户隔离</CardDescription>
-        <CardAction>
-          <Badge variant="secondary">{groups.length}</Badge>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="min-h-0 flex-1 p-2">
-        {dashboard.loadingOrders && !groups.length ? (
-          <div className="flex flex-col gap-2">
-            {[0, 1, 2].map((item) => <Skeleton key={item} className="h-14 w-full" />)}
-          </div>
-        ) : pager.items.length ? (
-          <ItemGroup className="gap-1">
-            {pager.items.map((group, index) => {
-              const firstOrder = group.orders[0]
-              const selected = selectedAccountId === group.accountId
-              return (
-                <Item key={group.accountId} variant={selected ? "muted" : "default"} size="xs" className="flex-nowrap">
-                  <ItemMedia>
-                    <Avatar>
-                      <AvatarFallback>{String(pager.page * 6 + index + 1).padStart(2, "0")}</AvatarFallback>
-                    </Avatar>
-                  </ItemMedia>
-                  <ItemContent className="min-w-0">
-                    <ItemTitle className="max-w-full truncate text-xs">
-                      {displayIdentifier(group.accountLabel, dashboard.privacyMasked)}
-                    </ItemTitle>
-                    <ItemDescription className="truncate font-mono text-[10px]">
-                      {displayPhone(firstOrder, dashboard.privacyMasked)} · {group.orders.length} 个号码
-                    </ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Button
-                      type="button"
-                      variant={selected ? "secondary" : "ghost"}
-                      size="icon-sm"
-                      onClick={() => dashboard.selectOrder(orderKey(firstOrder))}
-                      aria-label={`选择账户 ${group.accountLabel}`}
-                    >
-                      <Phone data-icon="inline-start" />
-                    </Button>
-                  </ItemActions>
-                </Item>
-              )
-            })}
-          </ItemGroup>
-        ) : (
-          <Empty className="h-full p-3">
-            <EmptyHeader>
-              <EmptyMedia variant="icon"><Server /></EmptyMedia>
-              <EmptyTitle>没有账户数据</EmptyTitle>
-              <EmptyDescription>
-                {dashboard.ordersCacheStatus === "empty" ? "Blob 暂无号码快照，请点击刷新" : "当前筛选没有号码"}
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+    <Sidebar variant="inset" collapsible="icon">
+      <SidebarHeader className="border-b border-sidebar-border">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton size="lg" asChild>
+              <div>
+                <AppMark />
+                <div className="min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
+                  <span className="block truncate font-semibold tracking-tight">Kitesim Relay</span>
+                  <span className="block truncate text-[10px] text-sidebar-foreground/60">多账户信号工作台</span>
+                </div>
+              </div>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
+
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>
+            <Route />
+            账户路由
+            <Badge variant="secondary" className="ml-auto group-data-[collapsible=icon]:hidden">{groups.length}</Badge>
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {dashboard.loadingOrders && !groups.length ? (
+                [0, 1, 2].map((item) => (
+                  <SidebarMenuItem key={item}>
+                    <SidebarMenuSkeleton showIcon />
+                  </SidebarMenuItem>
+                ))
+              ) : groups.length ? (
+                groups.map((group) => {
+                  const firstOrder = group.orders[0]
+                  const selected = selectedAccountId === group.accountId
+                  const accountLabel = displayIdentifier(group.accountLabel, dashboard.privacyMasked)
+                  return (
+                    <SidebarMenuItem key={group.accountId}>
+                      <SidebarMenuButton
+                        type="button"
+                        size="lg"
+                        isActive={selected}
+                        tooltip={accountLabel}
+                        className="h-12 pr-8"
+                        onClick={() => {
+                          dashboard.selectOrder(orderKey(firstOrder))
+                          if (isMobile) setOpenMobile(false)
+                        }}
+                      >
+                        <Server />
+                        <div className="min-w-0 flex-1 leading-tight">
+                          <span className="block truncate text-xs font-medium">{accountLabel}</span>
+                          <span className="block truncate font-mono text-[10px] text-sidebar-foreground/60">
+                            {displayPhone(firstOrder, dashboard.privacyMasked)}
+                          </span>
+                        </div>
+                      </SidebarMenuButton>
+                      <SidebarMenuBadge>{group.orders.length}</SidebarMenuBadge>
+                    </SidebarMenuItem>
+                  )
+                })
+              ) : (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <div title="当前筛选没有账户数据">
+                      <Server />
+                      <span>暂无账户数据</span>
+                    </div>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {dashboard.warnings.length > 0 && (
+          <Alert variant="destructive" className="mx-2 w-auto group-data-[collapsible=icon]:hidden">
+            <AlertTriangle />
+            <AlertTitle>{dashboard.warnings.length} 个账户读取失败</AlertTitle>
+          </Alert>
         )}
-      </CardContent>
-      {dashboard.warnings.length > 0 && (
-        <Alert variant="destructive" className="mx-2 mb-2 w-auto">
-          <AlertTriangle />
-          <AlertTitle>{dashboard.warnings.length} 个账户读取失败</AlertTitle>
-        </Alert>
-      )}
-      <CardFooter className="shrink-0 p-2">
-        <DataPagination page={pager.page} pageCount={pager.pageCount} onChange={pager.setPage} label="账户" />
-      </CardFooter>
-    </Card>
+
+        <SidebarDataStatus dashboard={dashboard} />
+      </SidebarContent>
+
+      <SidebarFooter className="border-t border-sidebar-border">
+        <AccountLoginDialog dashboard={dashboard} />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+              onClick={() => {
+                if (isMobile) setOpenMobile(false)
+                dashboard.lock()
+              }}
+              aria-label="锁定工作台"
+            >
+              <LockKeyhole data-icon="inline-start" />
+              <span className="group-data-[collapsible=icon]:hidden">锁定工作台</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">锁定并清除当前标签页口令</TooltipContent>
+        </Tooltip>
+      </SidebarFooter>
+      <SidebarRail />
+    </Sidebar>
   )
 }
 
@@ -565,11 +623,11 @@ function NumberWorkspace({
 
   return (
     <Card size="sm" className="h-full min-h-0 min-w-0 gap-0 py-0">
-      <CardHeader className="min-w-0 shrink-0 border-b py-3">
-        <CardTitle>号码信号</CardTitle>
-        <CardDescription className="hidden text-xs sm:block">选择号码后读取完整短信</CardDescription>
+      <CardHeader className="min-w-0 shrink-0 border-b py-2.5">
+        <CardTitle>号码队列</CardTitle>
+        <CardDescription className="hidden text-xs sm:block">选择号码，切换验证码与短信通道</CardDescription>
         <CardAction>
-          <InputGroup className="w-[150px] max-w-[46vw] sm:w-[210px] sm:max-w-none">
+          <InputGroup className="w-[148px] max-w-[46vw] sm:w-[196px] sm:max-w-none">
             <InputGroupAddon><Search /></InputGroupAddon>
             <InputGroupInput
               placeholder="搜索号码或账户"
@@ -608,7 +666,7 @@ function NumberWorkspace({
                       </ItemDescription>
                     </ItemContent>
                     <ItemActions>
-                      <Badge variant={statusVariant(label)} className="hidden sm:inline-flex">{label}</Badge>
+                      <Badge variant={statusVariant(label)} className="hidden min-[1180px]:inline-flex">{label}</Badge>
                       <Badge variant="outline">{count === undefined ? "未读" : `${count} 条`}</Badge>
                       <Button
                         type="button"
@@ -656,7 +714,7 @@ function NumberWorkspace({
   )
 }
 
-function CodePanel({ dashboard }: { dashboard: DashboardController }) {
+function CodeRunway({ dashboard }: { dashboard: DashboardController }) {
   const order = dashboard.selectedOrder
   const record = firstCodeRecord(dashboard.messages)
   const code = record?.code || ""
@@ -670,72 +728,105 @@ function CodePanel({ dashboard }: { dashboard: DashboardController }) {
         : code.length > 3
           ? `${code.slice(0, Math.ceil(code.length / 2))} ${code.slice(Math.ceil(code.length / 2))}`
           : code
+  const sourceLabel = dashboard.messageCacheStatus
+    ? CACHE_STATUS_LABEL[dashboard.messageCacheStatus]
+    : "等待读取"
+  const contextItems = [
+    {
+      label: "接收号码",
+      value: order ? displayPhone(order, dashboard.privacyMasked) : "—",
+      icon: Smartphone,
+      mono: true,
+    },
+    {
+      label: "所属账户",
+      value: displayIdentifier(order?.accountLabel || "—", dashboard.privacyMasked),
+      icon: Server,
+      mono: false,
+    },
+    {
+      label: "数据来源",
+      value: sourceLabel,
+      icon: DatabaseZap,
+      mono: false,
+    },
+  ]
 
   return (
     <Card size="sm" className="h-full min-h-0 min-w-0 gap-0 py-0">
-      <CardHeader className="shrink-0 border-b py-3">
-        <CardTitle>最新验证码</CardTitle>
-        <CardDescription className="text-xs">最近一条含验证码短信</CardDescription>
+      <CardHeader className="shrink-0 border-b py-2.5">
+        <CardTitle className="flex items-center gap-2">
+          <KeyRound className="size-4 text-primary" />
+          实时验证码
+        </CardTitle>
+        <CardDescription className="truncate text-xs">
+          {record
+            ? `${displayIdentifier(record.message.sender || "未知发送方", dashboard.privacyMasked)} · ${formatShortTime(record.message.time)}`
+            : "等待所选号码的验证码短信"}
+        </CardDescription>
         <CardAction>
           <Badge variant={dashboard.privacyMasked ? "outline" : "secondary"}>
             {dashboard.privacyMasked ? "已保护" : "可见"}
           </Badge>
         </CardAction>
       </CardHeader>
-      <CardContent className="flex min-h-0 flex-1 flex-col gap-2 py-2">
-        <Item variant="muted" className="min-h-0 flex-1 flex-nowrap">
+      <CardContent className="grid min-h-0 flex-1 gap-2 p-2 sm:grid-cols-[minmax(0,1fr)_minmax(250px,.72fr)]">
+        <Item variant="muted" className="min-h-0 flex-1 flex-nowrap px-3">
           <ItemContent className="min-w-0">
             {dashboard.loadingMessages ? (
-              <Skeleton className="h-9 w-36" />
+              <Skeleton className="h-12 w-44" />
             ) : (
-              <ItemTitle className="max-w-full font-mono text-3xl tracking-widest tabular-nums">
+              <ItemTitle className="max-w-full font-mono text-4xl tracking-[0.18em] tabular-nums sm:text-5xl xl:text-6xl">
                 {displayCode}
               </ItemTitle>
             )}
             <ItemDescription className="truncate text-xs">
-              {record
-                ? `${displayIdentifier(record.message.sender || "未知发送方", dashboard.privacyMasked)} · ${formatShortTime(record.message.time)}`
-                : "最近短信中没有识别到验证码"}
+              {record ? "最近一条已识别短信，可直接复制" : "最近短信中没有识别到验证码"}
             </ItemDescription>
           </ItemContent>
-          <ItemActions>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              onClick={() => dashboard.setPrivacyMasked(!dashboard.privacyMasked)}
-              disabled={!record || dashboard.loadingMessages}
-              aria-label="切换隐私遮罩"
-            >
-              {dashboard.privacyMasked ? <Eye data-icon="inline-start" /> : <EyeOff data-icon="inline-start" />}
-            </Button>
-            <Button
-              size="icon-sm"
-              onClick={dashboard.copyLatestCode}
-              disabled={!canCopy || dashboard.loadingMessages}
-              aria-label="复制最新验证码"
-            >
-              <Copy data-icon="inline-start" />
-            </Button>
+          <ItemActions className="self-center">
+            <ButtonGroup>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                onClick={() => dashboard.setPrivacyMasked(!dashboard.privacyMasked)}
+                disabled={!record || dashboard.loadingMessages}
+                aria-label="切换隐私遮罩"
+              >
+                {dashboard.privacyMasked ? <Eye data-icon="inline-start" /> : <EyeOff data-icon="inline-start" />}
+              </Button>
+              <Button
+                size="icon-sm"
+                onClick={dashboard.copyLatestCode}
+                disabled={!canCopy || dashboard.loadingMessages}
+                aria-label="复制最新验证码"
+              >
+                <Copy data-icon="inline-start" />
+              </Button>
+            </ButtonGroup>
           </ItemActions>
         </Item>
-        <div className="grid grid-cols-2 gap-2">
-          <Item variant="outline" size="xs" className="min-w-0">
-            <ItemContent className="min-w-0">
-              <ItemDescription>接收号码</ItemDescription>
-              <ItemTitle className="max-w-full truncate font-mono text-xs">
-                {order ? displayPhone(order, dashboard.privacyMasked) : "—"}
-              </ItemTitle>
-            </ItemContent>
-          </Item>
-          <Item variant="outline" size="xs" className="min-w-0">
-            <ItemContent className="min-w-0">
-              <ItemDescription>所属账户</ItemDescription>
-              <ItemTitle className="max-w-full truncate text-xs">
-                {displayIdentifier(order?.accountLabel || "—", dashboard.privacyMasked)}
-              </ItemTitle>
-            </ItemContent>
-          </Item>
-        </div>
+        <ItemGroup className="grid min-w-0 grid-cols-3 gap-1.5 sm:grid-cols-2 min-[1200px]:grid-cols-3">
+          {contextItems.map(({ label, value, icon: Icon, mono }) => (
+            <Item
+              key={label}
+              variant="outline"
+              size="xs"
+              className={cn(
+                "min-w-0 flex-nowrap",
+                label === "数据来源" && "sm:col-span-2 min-[1200px]:col-span-1",
+              )}
+            >
+              <ItemMedia variant="icon" className="hidden min-[430px]:flex sm:flex">
+                <Icon />
+              </ItemMedia>
+              <ItemContent className="min-w-0">
+                <ItemDescription className="truncate text-[10px]">{label}</ItemDescription>
+                <ItemTitle className={cn("max-w-full truncate text-xs", mono && "font-mono")}>{value}</ItemTitle>
+              </ItemContent>
+            </Item>
+          ))}
+        </ItemGroup>
       </CardContent>
     </Card>
   )
@@ -748,11 +839,11 @@ function MessageInbox({ dashboard, pageSize }: { dashboard: DashboardController;
   return (
     <>
       <Card size="sm" className="h-full min-h-0 min-w-0 gap-0 py-0">
-        <CardHeader className="shrink-0 border-b py-3">
+        <CardHeader className="shrink-0 border-b py-2.5">
           <CardTitle className="flex items-center gap-2">
-            短信收件箱
+            短信情报
             <Badge variant="secondary">{dashboard.messageTotalCount}</Badge>
-            {dashboard.messageHasMore && <Badge variant="destructive">仍有更多</Badge>}
+            {dashboard.messageHasMore && <Badge variant="destructive" className="hidden xl:inline-flex">仍有更多</Badge>}
           </CardTitle>
           <CardDescription className="truncate text-xs">
             {dashboard.selectedOrder
@@ -782,7 +873,7 @@ function MessageInbox({ dashboard, pageSize }: { dashboard: DashboardController;
                 const firstCode = message.code[0]
                 return (
                   <Item key={String(message.id ?? `${message.time}-${pager.page}-${index}`)} size="xs" className="flex-nowrap">
-                    <ItemMedia>
+                    <ItemMedia className="hidden min-[1100px]:flex">
                       <Avatar>
                         <AvatarFallback>{Array.from(sender).slice(0, 2).join("").toUpperCase() || "—"}</AvatarFallback>
                       </Avatar>
@@ -795,7 +886,7 @@ function MessageInbox({ dashboard, pageSize }: { dashboard: DashboardController;
                       <ItemDescription className="line-clamp-2 text-[10px]">{content}</ItemDescription>
                     </ItemContent>
                     <ItemActions>
-                      <Badge variant="outline" className="font-mono">
+                      <Badge variant="outline" className="hidden font-mono min-[1200px]:inline-flex">
                         {firstCode ? (dashboard.privacyMasked ? "••••••" : firstCode) : "无代码"}
                         {message.code.length > 1 ? ` +${message.code.length - 1}` : ""}
                       </Badge>
@@ -843,34 +934,27 @@ function MessageInbox({ dashboard, pageSize }: { dashboard: DashboardController;
   )
 }
 
-function MobileWorkspace({ dashboard }: { dashboard: DashboardController }) {
+function CompactWorkspace({ dashboard }: { dashboard: DashboardController }) {
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("numbers")
 
   return (
     <Tabs
       value={mobilePanel}
       onValueChange={(value) => setMobilePanel(value as MobilePanel)}
-      className="h-full w-full min-h-0 min-w-0 lg:hidden"
+      className="h-full w-full min-h-0 min-w-0 min-[940px]:hidden"
     >
       <TabsList className="w-full shrink-0">
         <TabsTrigger value="numbers">
           <Phone data-icon="inline-start" />
-          号码
-        </TabsTrigger>
-        <TabsTrigger value="code">
-          <KeyRound data-icon="inline-start" />
-          验证码
+          号码队列
         </TabsTrigger>
         <TabsTrigger value="messages">
           <MessageSquareText data-icon="inline-start" />
-          短信
+          短信情报
         </TabsTrigger>
       </TabsList>
       <TabsContent value="numbers" className="min-h-0 min-w-0">
-        <NumberWorkspace dashboard={dashboard} pageSize={4} onSelect={() => setMobilePanel("code")} />
-      </TabsContent>
-      <TabsContent value="code" className="min-h-0 min-w-0">
-        <CodePanel dashboard={dashboard} />
+        <NumberWorkspace dashboard={dashboard} pageSize={4} onSelect={() => setMobilePanel("messages")} />
       </TabsContent>
       <TabsContent value="messages" className="min-h-0 min-w-0">
         <MessageInbox dashboard={dashboard} pageSize={4} />
@@ -881,28 +965,36 @@ function MobileWorkspace({ dashboard }: { dashboard: DashboardController }) {
 
 export function DashboardShell({ dashboard }: { dashboard: DashboardController }) {
   return (
-    <div className="flex h-dvh min-h-0 min-w-0 flex-col overflow-hidden bg-muted/30 text-foreground">
+    <SidebarProvider
+      defaultOpen
+      className="h-dvh min-h-0 overflow-hidden bg-sidebar text-foreground"
+      style={
+        {
+          "--sidebar-width": "15rem",
+          "--sidebar-width-icon": "3.25rem",
+        } as React.CSSProperties
+      }
+    >
       <a href="#dashboard-content" className="sr-only rounded-md bg-background px-3 py-2 focus:not-sr-only focus:fixed focus:top-2 focus:left-2">
         跳到主要内容
       </a>
-      <WorkspaceHeader dashboard={dashboard} />
-      <main
+      <WorkspaceSidebar dashboard={dashboard} />
+      <SidebarInset
         id="dashboard-content"
-        className="grid min-h-0 min-w-0 flex-1 grid-rows-[64px_minmax(0,1fr)] gap-2 p-2 md:gap-3 md:p-3"
+        className="h-dvh min-h-0 min-w-0 overflow-hidden md:h-[calc(100dvh-1rem)]"
       >
-        <CommandStrip dashboard={dashboard} />
+        <WorkspaceHeader dashboard={dashboard} />
+        <div className="grid min-h-0 min-w-0 flex-1 grid-rows-[218px_minmax(0,1fr)] gap-2 overflow-hidden bg-muted/30 p-2 sm:grid-rows-[172px_minmax(0,1fr)] md:gap-3 md:p-3">
+          <CodeRunway dashboard={dashboard} />
 
-        <div className="hidden min-h-0 grid-cols-[190px_minmax(430px,1.12fr)_minmax(340px,.88fr)] gap-3 lg:grid">
-          <AccountRail dashboard={dashboard} />
-          <NumberWorkspace dashboard={dashboard} pageSize={7} />
-          <div className="grid min-h-0 grid-rows-[210px_minmax(0,1fr)] gap-3">
-            <CodePanel dashboard={dashboard} />
-            <MessageInbox dashboard={dashboard} pageSize={3} />
+          <div className="hidden min-h-0 min-w-0 grid-cols-[minmax(360px,1.15fr)_minmax(300px,.85fr)] gap-3 min-[940px]:grid">
+            <NumberWorkspace dashboard={dashboard} pageSize={5} />
+            <MessageInbox dashboard={dashboard} pageSize={4} />
           </div>
-        </div>
 
-        <MobileWorkspace dashboard={dashboard} />
-      </main>
-    </div>
+          <CompactWorkspace dashboard={dashboard} />
+        </div>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }

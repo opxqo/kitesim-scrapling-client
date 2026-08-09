@@ -4,6 +4,7 @@ import type {
   HealthResponse,
   KitesimAuthChallenge,
   KitesimAuthComplete,
+  KitesimAuthMaintainResult,
   KitesimAuthStatus,
   KitesimOrder,
   MessagesResponse,
@@ -82,6 +83,14 @@ export function completeKitesimAuth(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  })
+}
+
+export function maintainKitesimAuth(accessKey: string): Promise<KitesimAuthMaintainResult> {
+  return apiRequest<KitesimAuthMaintainResult>("/api/auth/maintain", accessKey, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ force: true }),
   })
 }
 

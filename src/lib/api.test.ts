@@ -6,6 +6,7 @@ import {
   getKitesimAuthStatus,
   getMessages,
   getOrders,
+  maintainKitesimAuth,
 } from "./api"
 import type { KitesimOrder } from "@/types"
 
@@ -77,11 +78,13 @@ describe("dashboard cache request intent", () => {
       captchaCode: "A7B9",
       captchaKey: "captcha:0123456789abcdef",
     })
+    await maintainKitesimAuth("dashboard-test-key")
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
       "/api/auth/status",
       "/api/auth/challenge?accountId=login_2",
       "/api/auth/complete",
+      "/api/auth/maintain",
     ])
     for (const [, options] of fetchMock.mock.calls) {
       expect(new Headers(options?.headers).get("Authorization")).toBe("Bearer dashboard-test-key")
@@ -89,10 +92,12 @@ describe("dashboard cache request intent", () => {
     expect(fetchMock.mock.calls[0][1]?.method).toBeUndefined()
     expect(fetchMock.mock.calls[1][1]?.method).toBeUndefined()
     expect(fetchMock.mock.calls[2][1]?.method).toBe("POST")
+    expect(fetchMock.mock.calls[3][1]?.method).toBe("POST")
     expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({
       accountId: "login_2",
       captchaCode: "A7B9",
       captchaKey: "captcha:0123456789abcdef",
     })
+    expect(JSON.parse(String(fetchMock.mock.calls[3][1]?.body))).toEqual({ force: true })
   })
 })

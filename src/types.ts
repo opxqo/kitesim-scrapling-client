@@ -63,14 +63,49 @@ export type KitesimAuthAccount = {
   verifiedAt: string
 }
 
+export type KitesimAuthMaintenanceAccount = {
+  accountId: string
+  emailHint: string
+  state: "healthy" | "relogged" | "attention"
+  checkedAt: string
+  message: string
+}
+
+export type KitesimAuthMaintenance = {
+  state: "running" | "success" | "attention"
+  source: "dashboard" | "schedule" | "refresh"
+  lastStartedAt: string
+  lastCompletedAt: string
+  nextAllowedAt: string
+  accountCount: number
+  healthyCount: number
+  reloggedCount: number
+  failedCount: number
+  accounts: KitesimAuthMaintenanceAccount[]
+}
+
+export type KitesimAuthAutomation = {
+  enabled: boolean
+  configured: boolean
+  gatewayConfigured: boolean
+  model: string
+  maintenance: KitesimAuthMaintenance | null
+}
+
 export type KitesimAuthStatus = {
   ok: boolean
   configured: boolean
   credentialsConfigured: boolean
   storageConfigured: boolean
+  automation: KitesimAuthAutomation
   accountCount: number
   readyCount: number
   accounts: KitesimAuthAccount[]
+}
+
+export type KitesimAuthMaintainResult = KitesimAuthMaintenance & {
+  ok: boolean
+  skipped: boolean
 }
 
 export type KitesimAuthChallenge = {
